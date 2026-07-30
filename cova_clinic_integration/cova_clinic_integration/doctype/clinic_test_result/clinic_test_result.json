@@ -1,0 +1,164 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "CTR.-.####",
+ "creation": "2026-05-31 13:03:26.250684",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "member_type",
+  "column_break_eoqa",
+  "employee",
+  "column_break_eibz",
+  "full_name",
+  "column_break_oiff",
+  "payroll_number",
+  "column_break_nwkv",
+  "clinic_visit_reference",
+  "section_break_ocms",
+  "clinical_outcome",
+  "column_break_bbbm",
+  "test_package",
+  "column_break_tlwe",
+  "request_id",
+  "section_break_hpjg",
+  "results",
+  "data_tab",
+  "cova_raw"
+ ],
+ "fields": [
+  {
+   "fieldname": "member_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Member Type",
+   "options": "\nActive\nPre Employment",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_eoqa",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Active'",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "mandatory_depends_on": "eval:doc.member_type=='Active'",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "column_break_eibz",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fetch_if_empty": 1,
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Full Name",
+   "mandatory_depends_on": "eval:doc.member_type=='Active'"
+  },
+  {
+   "fieldname": "column_break_oiff",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "employee.employee_number",
+   "fetch_if_empty": 1,
+   "fieldname": "payroll_number",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Payroll Number/ National ID",
+   "mandatory_depends_on": "eval:doc.member_type=='Active'"
+  },
+  {
+   "fieldname": "column_break_nwkv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "clinic_visit_reference",
+   "fieldtype": "Link",
+   "label": "Clinic Visit Reference",
+   "options": "Clinic Visit Cost"
+  },
+  {
+   "fieldname": "section_break_ocms",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "clinical_outcome",
+   "fieldtype": "Data",
+   "label": "Clinical Outcome"
+  },
+  {
+   "fieldname": "column_break_bbbm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "test_package",
+   "fieldtype": "Data",
+   "label": "Test Package"
+  },
+  {
+   "fieldname": "column_break_tlwe",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "label": "Request ID"
+  },
+  {
+   "fieldname": "section_break_hpjg",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "Table",
+   "label": "Results",
+   "options": "Test Result"
+  },
+  {
+   "fieldname": "data_tab",
+   "fieldtype": "Tab Break",
+   "label": "Data"
+  },
+  {
+   "fieldname": "cova_raw",
+   "fieldtype": "Long Text",
+   "label": "COVA Raw"
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-30 12:18:55.430750",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Test Result",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

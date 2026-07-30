@@ -1,0 +1,188 @@
+{
+ "actions": [],
+ "autoname": "CV.-.{full_name}.-.{employee}.-.###",
+ "creation": "2026-05-31 13:00:14.261002",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "full_name",
+  "candidate_name",
+  "column_break_ykjv",
+  "payroll_number",
+  "column_break_irtb",
+  "visit_date",
+  "column_break_uuzv",
+  "total_cost",
+  "benefit_balances_section",
+  "benefit_consultation",
+  "column_break_vsdw",
+  "benefit_pharmacy",
+  "column_break_degh",
+  "benefit_laboratory",
+  "column_break_pujq",
+  "benefit_diagnostic",
+  "column_break_iezb",
+  "benefit_specialist",
+  "section_break_idse",
+  "visit_line_item",
+  "data_tab",
+  "cova_raw"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fetch_if_empty": 1,
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Full Name"
+  },
+  {
+   "depends_on": "eval:doc.employee === null",
+   "fieldname": "candidate_name",
+   "fieldtype": "Data",
+   "label": "Full Name "
+  },
+  {
+   "fieldname": "column_break_ykjv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "employee.employee_number",
+   "fetch_if_empty": 1,
+   "fieldname": "payroll_number",
+   "fieldtype": "Data",
+   "label": "Payroll Number",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_irtb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "visit_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Visit Date",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_uuzv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total Cost(KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "benefit_balances_section",
+   "fieldtype": "Section Break",
+   "label": "Benefit Balances"
+  },
+  {
+   "fieldname": "benefit_consultation",
+   "fieldtype": "Currency",
+   "label": "Benefit: Consultation (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_vsdw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "benefit_pharmacy",
+   "fieldtype": "Currency",
+   "label": "Benefit: Pharmacy (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_degh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "benefit_laboratory",
+   "fieldtype": "Currency",
+   "label": "Benefit: Laboratory (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_pujq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "benefit_diagnostic",
+   "fieldtype": "Currency",
+   "label": "Benefit: Diagnostic (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_iezb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "benefit_specialist",
+   "fieldtype": "Currency",
+   "label": "Benefit: Specialist (KES)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_idse",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "visit_line_item",
+   "fieldtype": "Table",
+   "label": "Visit Line Item",
+   "options": "Visit Line Item"
+  },
+  {
+   "fieldname": "data_tab",
+   "fieldtype": "Tab Break",
+   "label": "Data"
+  },
+  {
+   "fieldname": "cova_raw",
+   "fieldtype": "Long Text",
+   "label": "COVA Raw"
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-29 16:50:52.982956",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Visit Cost",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee"
+}

@@ -1,0 +1,156 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "TR.-.####",
+ "creation": "2026-05-31 13:03:56.894871",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "member_type",
+  "employee",
+  "payroll_number",
+  "nationa_id",
+  "date_of_birth",
+  "phone_number",
+  "column_break_dhim",
+  "status",
+  "gender",
+  "test_package",
+  "scheduled_from",
+  "scheduled_to",
+  "column_break_rnjg",
+  "notes",
+  "linked_test_result"
+ ],
+ "fields": [
+  {
+   "fieldname": "member_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Member Type",
+   "options": "\nActive\nPre Employment",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Active'",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Active'",
+   "fetch_from": "employee.employee_number",
+   "fetch_if_empty": 1,
+   "fieldname": "payroll_number",
+   "fieldtype": "Data",
+   "label": "Payroll Number"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Pre Employment'",
+   "fieldname": "nationa_id",
+   "fieldtype": "Data",
+   "label": "Nationa ID",
+   "mandatory_depends_on": "eval:doc.member_type!=='Active'"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Pre Employment'",
+   "fieldname": "date_of_birth",
+   "fieldtype": "Date",
+   "label": "Date of Birth",
+   "mandatory_depends_on": "eval:doc.member_type!=='Active'"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Pre Employment'",
+   "fieldname": "phone_number",
+   "fieldtype": "Phone",
+   "label": "Phone Number"
+  },
+  {
+   "fieldname": "column_break_dhim",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "\nPending\nCompleted\nCancelled",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Pre Employment'",
+   "fieldname": "gender",
+   "fieldtype": "Select",
+   "label": "Gender",
+   "options": "\nMale\nFemale"
+  },
+  {
+   "fieldname": "test_package",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Test Package",
+   "options": "\nPre Employment Wellness\nCholinesterase\nFood Handler\nAnnual Medical\nExit Medical",
+   "reqd": 1
+  },
+  {
+   "fieldname": "scheduled_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled From",
+   "reqd": 1
+  },
+  {
+   "fieldname": "scheduled_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled To",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_rnjg",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "linked_test_result",
+   "fieldtype": "Link",
+   "label": "Linked Test Result",
+   "options": "Clinic Test Result"
+  }
+ ],
+ "links": [],
+ "modified": "2026-05-31 14:56:57.617076",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Test Request",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

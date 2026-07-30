@@ -1,0 +1,234 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "{full_name}.-.{national_id}.-.{employee}",
+ "creation": "2026-06-01 16:48:20.228474",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "member_type",
+  "employee",
+  "national_id",
+  "column_break_qfpt",
+  "full_name",
+  "payroll_number",
+  "phone_number",
+  "column_break_uspg",
+  "gender",
+  "status",
+  "column_break_jqyq",
+  "last_visit",
+  "visit_reference",
+  "column_break_ezpf",
+  "test_request_reference",
+  "test_result_reference",
+  "section_break_bbpz",
+  "cova_member_id",
+  "company_code",
+  "branch_code",
+  "column_break_vxzy",
+  "wallet_id",
+  "wallet_reference",
+  "package_code",
+  "column_break_vdsm",
+  "patient_id",
+  "date_of_birth",
+  "tab_2_tab",
+  "cova_raw"
+ ],
+ "fields": [
+  {
+   "fieldname": "member_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Member Type",
+   "options": "\nActive\nPre Employment",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.member_type === \"Active\"",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "link_filters": "[[\"Employee\",\"company\",\"=\",\"Karen Roses\"],[\"Employee\",\"status\",\"=\",\"Active\"]]",
+   "mandatory_depends_on": "eval:doc.member_type === \"Active\"",
+   "options": "Employee",
+   "unique": 1
+  },
+  {
+   "depends_on": "eval:doc.member_type === \"Pre Employment\"",
+   "fieldname": "national_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "National ID",
+   "mandatory_depends_on": "eval:doc.member_type === \"Pre Employment\"",
+   "unique": 1
+  },
+  {
+   "fieldname": "column_break_qfpt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fetch_if_empty": 1,
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "label": "Full Name"
+  },
+  {
+   "depends_on": "eval:doc.member_type === \"Active\"",
+   "fetch_from": "employee.employee_number",
+   "fetch_if_empty": 1,
+   "fieldname": "payroll_number",
+   "fieldtype": "Data",
+   "label": "Payroll Number"
+  },
+  {
+   "depends_on": "eval:doc.member_type === \"Pre Employment\"",
+   "fieldname": "phone_number",
+   "fieldtype": "Phone",
+   "label": "Phone Number",
+   "mandatory_depends_on": "eval:doc.member_type === \"Pre Employment\""
+  },
+  {
+   "fieldname": "column_break_uspg",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "gender",
+   "fieldtype": "Select",
+   "label": "Gender",
+   "options": "\nMale\nFemale"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "\nActive\nInactive"
+  },
+  {
+   "fieldname": "column_break_jqyq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_visit",
+   "fieldtype": "Date",
+   "label": "Last Visit"
+  },
+  {
+   "fieldname": "visit_reference",
+   "fieldtype": "Link",
+   "label": "Visit Reference",
+   "options": "Clinic Visit Cost"
+  },
+  {
+   "fieldname": "column_break_ezpf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "test_request_reference",
+   "fieldtype": "Link",
+   "label": "Test Request Reference",
+   "options": "Clinic Test Request"
+  },
+  {
+   "fieldname": "test_result_reference",
+   "fieldtype": "Link",
+   "label": "Test Result Reference",
+   "options": "Clinic Test Result"
+  },
+  {
+   "fieldname": "section_break_bbpz",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "cova_member_id",
+   "fieldtype": "Data",
+   "label": "Cova Member ID"
+  },
+  {
+   "fieldname": "company_code",
+   "fieldtype": "Data",
+   "label": "Company Code"
+  },
+  {
+   "fieldname": "branch_code",
+   "fieldtype": "Data",
+   "label": "Branch Code"
+  },
+  {
+   "fieldname": "column_break_vxzy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wallet_id",
+   "fieldtype": "Data",
+   "label": "Wallet ID"
+  },
+  {
+   "fieldname": "wallet_reference",
+   "fieldtype": "Data",
+   "label": "Wallet Reference"
+  },
+  {
+   "fieldname": "package_code",
+   "fieldtype": "Data",
+   "label": "Package Code"
+  },
+  {
+   "fieldname": "column_break_vdsm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "patient_id",
+   "fieldtype": "Data",
+   "label": "Patient ID"
+  },
+  {
+   "fieldname": "date_of_birth",
+   "fieldtype": "Datetime",
+   "label": "\tDate of Birth"
+  },
+  {
+   "fieldname": "tab_2_tab",
+   "fieldtype": "Tab Break",
+   "label": "Data"
+  },
+  {
+   "fieldname": "cova_raw",
+   "fieldtype": "Long Text",
+   "label": "COVA Raw"
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-30 12:18:55.164696",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Cova Members",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

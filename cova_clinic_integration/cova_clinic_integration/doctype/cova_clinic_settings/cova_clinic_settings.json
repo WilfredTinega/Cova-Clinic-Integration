@@ -1,0 +1,92 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-05-31 16:19:45.031599",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "base_url",
+  "api_key",
+  "column_break_brge",
+  "register_endpoint",
+  "deactivation_endpoint",
+  "column_break_lmct",
+  "test_request_endpoint",
+  "pre_employement_endpoint",
+  "column_break_ipdy",
+  "access_token"
+ ],
+ "fields": [
+  {
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "Base URL"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Data",
+   "label": "API Key"
+  },
+  {
+   "fieldname": "column_break_brge",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "register_endpoint",
+   "fieldtype": "Data",
+   "label": "Register Endpoint"
+  },
+  {
+   "fieldname": "deactivation_endpoint",
+   "fieldtype": "Data",
+   "label": "Deactivation Endpoint"
+  },
+  {
+   "fieldname": "column_break_lmct",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "test_request_endpoint",
+   "fieldtype": "Data",
+   "label": "Test Request Endpoint"
+  },
+  {
+   "fieldname": "pre_employement_endpoint",
+   "fieldtype": "Data",
+   "label": "Pre Employement Endpoint"
+  },
+  {
+   "fieldname": "column_break_ipdy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "access_token",
+   "fieldtype": "Text",
+   "label": "Access Token"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-29 16:10:59.482337",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Cova Clinic Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

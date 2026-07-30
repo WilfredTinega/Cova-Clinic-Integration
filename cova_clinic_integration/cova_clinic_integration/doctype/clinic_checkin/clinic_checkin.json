@@ -1,0 +1,197 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-07-30 12:40:58.551748",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "biometrics_tab",
+  "b_employee",
+  "column_break_bfqq",
+  "employee_payroll_number",
+  "column_break_foxc",
+  "log_type",
+  "column_break_bkxl",
+  "time",
+  "api_tab",
+  "employee",
+  "column_break_dret",
+  "full_name",
+  "column_break_mjea",
+  "payroll_number",
+  "column_break_aysj",
+  "time_in",
+  "column_break_pkyf",
+  "time_out",
+  "column_break_ulqe",
+  "leave_application",
+  "sick_off_start_and_end_date_section",
+  "start_date",
+  "column_break_scji",
+  "end_date",
+  "section_break_fzca",
+  "reason"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee"
+  },
+  {
+   "fetch_from": "employee.employee_number",
+   "fieldname": "payroll_number",
+   "fieldtype": "Data",
+   "label": "Payroll Number"
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "full_name",
+   "fieldtype": "Data",
+   "label": "Full Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_pkyf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "time_in",
+   "fieldtype": "Datetime",
+   "label": "Time IN"
+  },
+  {
+   "fieldname": "time_out",
+   "fieldtype": "Datetime",
+   "label": "Time Out"
+  },
+  {
+   "fieldname": "leave_application",
+   "fieldtype": "Link",
+   "label": "Leave Application",
+   "options": "Leave Application",
+   "read_only": 1
+  },
+  {
+   "fieldname": "sick_off_start_and_end_date_section",
+   "fieldtype": "Section Break",
+   "label": "Sick Off Start and End Date"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "label": "Start Date"
+  },
+  {
+   "fieldname": "column_break_scji",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date"
+  },
+  {
+   "fieldname": "section_break_fzca",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Long Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "biometrics_tab",
+   "fieldtype": "Tab Break",
+   "label": "Biometrics"
+  },
+  {
+   "fieldname": "b_employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "link_filters": "[[\"Employee\",\"status\",\"=\",\"Active\"]]",
+   "options": "Employee"
+  },
+  {
+   "fieldname": "column_break_bfqq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "employee.employee_number",
+   "fetch_if_empty": 1,
+   "fieldname": "employee_payroll_number",
+   "fieldtype": "Data",
+   "label": "Employee Payroll Number"
+  },
+  {
+   "fieldname": "column_break_foxc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "log_type",
+   "fieldtype": "Select",
+   "label": "Log Type",
+   "options": "\nIN\nOUT"
+  },
+  {
+   "fieldname": "column_break_bkxl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "time",
+   "fieldtype": "Datetime",
+   "label": "Time"
+  },
+  {
+   "fieldname": "api_tab",
+   "fieldtype": "Tab Break",
+   "label": "API"
+  },
+  {
+   "fieldname": "column_break_dret",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_mjea",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_aysj",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_ulqe",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-30 13:14:01.554291",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Checkin",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee"
+}

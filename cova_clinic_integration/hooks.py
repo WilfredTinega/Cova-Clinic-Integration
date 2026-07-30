@@ -14,6 +14,18 @@ use_json_request_body = True
 
 # required_apps = []
 
+# Endpoints
+# ------------------
+# Preserve the original Server Script public URLs so COVA's webhooks and the
+# Cova Clinic Settings keep working unchanged:
+#   POST /api/method/cova_clinic_api
+#   POST /api/method/clinic_disease_report
+override_whitelisted_methods = {
+	"cova_clinic_api": "cova_clinic_integration.api.cova_clinic_api",
+	"clinic_disease_report": "cova_clinic_integration.api.clinic_disease_report",
+	"getClinicData": "cova_clinic_integration.api.get_clinic_data",
+}
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
@@ -47,8 +59,17 @@ use_json_request_body = True
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
-# doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+# COVA action buttons (register / request test / deactivate), ported from the
+# live Client Scripts. Form scripts add the buttons on the record; list scripts
+# add the bulk buttons on the list view.
+doctype_js = {
+	"Employee": "public/js/employee.js",
+	"Job Applicant": "public/js/job_applicant.js",
+}
+doctype_list_js = {
+	"Employee": "public/js/employee_list.js",
+	"Job Applicant": "public/js/job_applicant_list.js",
+}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -90,12 +111,21 @@ use_json_request_body = True
 # ------------
 
 # before_install = "cova_clinic_integration.install.before_install"
-# after_install = "cova_clinic_integration.install.after_install"
+after_install = "cova_clinic_integration.install.install_clinic_fields"
+
+# Migration
+# ------------
+# Re-assert the integration's fields on every migrate (idempotent). Needed
+# because normal fields on a standard doctype can be dropped when that doctype
+# is re-imported during migrate.
+after_migrate = "cova_clinic_integration.install.install_clinic_fields"
 
 # Uninstallation
 # ------------
+# Remove the integration's fields (and their columns) from Job Applicant /
+# Employee when the app is uninstalled.
+before_uninstall = "cova_clinic_integration.install.uninstall_clinic_fields"
 
-# before_uninstall = "cova_clinic_integration.uninstall.before_uninstall"
 # after_uninstall = "cova_clinic_integration.uninstall.after_uninstall"
 
 # Integration Setup
