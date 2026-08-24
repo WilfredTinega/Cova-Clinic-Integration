@@ -422,9 +422,19 @@ class TestGender(IntegrationTestCase):
 
 	def test_an_unknown_gender_is_rejected(self):
 		with self.assertRaises(frappe.exceptions.LinkValidationError):
-			self._member("Male ", "90000091")   # trailing space is not a Gender
-		with self.assertRaises(frappe.exceptions.LinkValidationError):
 			self._member("M", "90000092")
+
+	def test_a_padded_gender_never_reaches_the_column(self):
+		# "Male " is not a Gender, but whether it is *rejected* is not the app's
+		# call: MariaDB's collation is PAD SPACE, so on frappe v16 the link
+		# resolves to the real record and the field is rewritten to its name,
+		# while v17's bulk link prefetch matches in python and throws. Either
+		# outcome is fine — the padded string must simply never be stored.
+		try:
+			doc = self._member("Male ", "90000091")
+		except frappe.exceptions.LinkValidationError:
+			return
+		self.assertEqual(doc.gender, "Male")
 
 	def test_gender_survives_the_member_helper(self):
 		cm = api.create_or_update_cova_member(
