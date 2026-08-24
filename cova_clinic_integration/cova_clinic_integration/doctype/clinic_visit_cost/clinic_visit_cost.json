@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "employee",
+  "cova_member",
   "full_name",
   "candidate_name",
   "column_break_ykjv",
@@ -38,6 +39,13 @@
    "label": "Employee",
    "options": "Employee",
    "reqd": 1
+  },
+  {
+   "fieldname": "cova_member",
+   "fieldtype": "Link",
+   "label": "Cova Member",
+   "options": "Cova Members",
+   "description": "Filled in automatically; links this record back to the member's Cova record."
   },
   {
    "fetch_from": "employee.employee_name",
@@ -160,7 +168,18 @@
    "label": "COVA Raw"
   }
  ],
- "links": [],
+ "links": [
+  {
+   "group": "Results",
+   "link_doctype": "Clinic Test Result",
+   "link_fieldname": "clinic_visit_reference"
+  },
+  {
+   "group": "Membership",
+   "link_doctype": "Cova Members",
+   "link_fieldname": "visit_reference"
+  }
+ ],
  "modified": "2026-07-29 16:50:52.982956",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",

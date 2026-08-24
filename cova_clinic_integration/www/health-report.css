@@ -1,0 +1,536 @@
+/* Clinic Analytics — the page shell stays creamy white / white / black; the
+   charts carry the colour. Values are pinned rather than taken from the portal
+   theme variables so the page reads identically whichever theme the viewer is
+   on. Chart hues live in health-report.js. */
+
+:root {
+  --cdd-cream: #faf7f0;
+  --cdd-white: #ffffff;
+  --cdd-ink: #111111;
+  --cdd-ink-muted: rgba(17,17,17,0.6);
+  --cdd-ink-faint: rgba(17,17,17,0.38);
+  --cdd-hairline: rgba(17,17,17,0.14);
+  --cdd-wash: rgba(17,17,17,0.04);
+  /* categorical slot 1 — the same blue the charts lead with */
+  --cdd-accent: #2a78d6;
+  --cdd-rail-w: 232px;
+  --cdd-rail-w-collapsed: 68px;
+}
+
+body { background: var(--cdd-cream); }
+.page-breadcrumbs, .page-header-wrapper, .page-footer { display: none; }
+.page-content-wrapper { margin: 0; }
+.page_content { min-height: 0; }
+
+#cova-clinic-app {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--cdd-ink);
+  background: var(--cdd-cream);
+  min-height: 100vh;
+}
+#cova-clinic-app * { box-sizing: border-box; }
+
+/* ── Floating sidebar ─────────────────────────────────────────────── */
+.cdd-rail {
+  position: fixed;
+  top: 18px;
+  left: 18px;
+  bottom: 18px;
+  width: var(--cdd-rail-w);
+  background: var(--cdd-white);
+  color: var(--cdd-ink);
+  border: 1px solid var(--cdd-hairline);
+  border-radius: 16px;
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  z-index: 20;
+  box-shadow: 0 8px 28px rgba(17,17,17,0.08);
+  transition: width .18s ease;
+}
+.cdd-rail.is-collapsed { width: var(--cdd-rail-w-collapsed); }
+
+.cdd-rail-toggle {
+  position: absolute;
+  top: 22px;
+  right: -11px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--cdd-hairline);
+  background: var(--cdd-white);
+  color: var(--cdd-ink);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cdd-chevron {
+  width: 6px; height: 6px;
+  border-left: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
+  transform: rotate(45deg);
+  margin-left: 2px;
+  transition: transform .18s ease;
+}
+.cdd-rail.is-collapsed .cdd-chevron { transform: rotate(-135deg); margin-left: -2px; }
+
+.cdd-rail-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 8px 10px;
+  min-height: 26px;
+  border-bottom: 1px solid var(--cdd-hairline);
+}
+.cdd-rail-mark {
+  flex: 0 0 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 7px;
+  background: var(--cdd-ink);
+  color: var(--cdd-white);
+}
+.cdd-rail-title {
+  font-size: 14px; font-weight: 700; letter-spacing: .02em;
+  white-space: nowrap;
+}
+
+/* On a short viewport the rail itself scrolls rather than spilling past the
+   bottom, since the page behind it no longer scrolls. */
+.cdd-rail-nav {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px;
+  overflow-y: auto; min-height: 0;
+}
+
+.cdd-nav-item {
+  width: 100%;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--cdd-ink-muted);
+  font-size: 13px; font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background .14s, color .14s;
+}
+.cdd-nav-item:hover { background: var(--cdd-cream); color: var(--cdd-ink); }
+.cdd-nav-item.is-active { background: var(--cdd-ink); color: var(--cdd-white); font-weight: 650; }
+.cdd-nav-icon { flex: 0 0 18px; height: 18px; display: flex; align-items: center; justify-content: center; }
+.cdd-nav-label { white-space: nowrap; overflow: hidden; }
+
+/* Who is signed in. margin-top:auto pushes this and the desk link below it to
+   the foot of the rail, however tall the nav above them grows. */
+.cdd-rail-user {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px;
+  border-top: 1px solid var(--cdd-hairline);
+  padding-top: 14px;
+  min-width: 0;
+}
+.cdd-rail-avatar {
+  flex: 0 0 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--cdd-accent); color: var(--cdd-white);
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+}
+.cdd-rail-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.cdd-rail-who-name {
+  font-size: 12.5px; font-weight: 650; color: var(--cdd-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cdd-rail-who-role {
+  font-size: 10.5px; color: var(--cdd-ink-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Back-to-desk sits at the foot of the rail, separated from the dashboards it
+   is not one of. margin-top:auto pushes it down however tall the nav is. */
+.cdd-rail-exit {
+  margin-top: auto;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px;
+  border-top: 1px solid var(--cdd-hairline);
+  padding-top: 14px;
+  color: var(--cdd-ink-muted);
+  font-size: 13px; font-weight: 500;
+  text-decoration: none;
+  border-radius: 0 0 10px 10px;
+  transition: color .14s;
+}
+.cdd-rail-exit:hover { color: var(--cdd-ink); text-decoration: none; }
+
+/* ── Date picker ──────────────────────────────────────────────────── */
+/* A read-only text input plus the popup calendar built in health-report.js.
+   The native date control is not used: its mm/dd/yyyy chrome is locale-driven
+   and cannot be themed. */
+.cdd-datefield { position: relative; display: flex; }
+.cdd-dateinput {
+  width: 100%;
+  padding: 8px 30px 8px 10px;
+  border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink);
+  font-size: 13px; font-family: inherit; cursor: pointer;
+  transition: border-color .15s;
+}
+.cdd-dateinput::placeholder { color: var(--cdd-ink-faint); }
+.cdd-dateinput:focus { outline: none; border-color: var(--cdd-accent); }
+.cdd-datefield-icon {
+  position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
+  color: var(--cdd-ink-faint); pointer-events: none; display: flex;
+}
+.cdd-datefield:hover .cdd-datefield-icon { color: var(--cdd-ink-muted); }
+
+/* ── Link (typeahead) filter ──────────────────────────────────────── */
+.cdd-linkfield { position: relative; display: flex; min-width: 210px; }
+.cdd-linkinput {
+  width: 100%;
+  padding: 8px 26px 8px 10px;
+  border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink);
+  font-size: 13px; font-family: inherit;
+  transition: border-color .15s;
+}
+.cdd-linkinput::placeholder { color: var(--cdd-ink-faint); }
+.cdd-linkinput:focus { outline: none; border-color: var(--cdd-accent); }
+.cdd-linkclear {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--cdd-ink-faint);
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+.cdd-linkclear:hover { background: var(--cdd-cream); color: var(--cdd-ink); }
+
+.cdd-linklist {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  z-index: 40;
+  max-height: 260px; overflow-y: auto;
+  background: var(--cdd-white);
+  border: 1px solid var(--cdd-hairline);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(17,17,17,0.14);
+  padding: 4px;
+}
+.cdd-linkopt {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 9px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--cdd-ink);
+  font-size: 12.5px; font-family: inherit; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cdd-linkopt:hover { background: var(--cdd-cream); }
+.cdd-linkopt.is-selected { background: var(--cdd-accent); color: var(--cdd-white); font-weight: 600; }
+.cdd-linkopt.is-any { color: var(--cdd-ink-muted); font-weight: 600; }
+.cdd-linkopt.is-any:hover { color: var(--cdd-ink); }
+.cdd-linkempty {
+  padding: 10px 9px; font-size: 12px; color: var(--cdd-ink-muted); text-align: center;
+}
+
+.cdd-cal {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 244px;
+  background: var(--cdd-white);
+  border: 1px solid var(--cdd-hairline);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(17,17,17,0.14);
+  padding: 10px;
+}
+.cdd-cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cdd-cal-label { font-size: 13px; font-weight: 700; color: var(--cdd-ink); }
+.cdd-cal-nav {
+  width: 26px; height: 26px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--cdd-ink-muted);
+  font-size: 17px; line-height: 1; cursor: pointer;
+}
+.cdd-cal-nav:hover { background: var(--cdd-cream); color: var(--cdd-ink); }
+
+.cdd-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cdd-cal-dow {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--cdd-ink-faint); text-align: center; padding-bottom: 4px;
+}
+.cdd-cal-pad { height: 30px; }
+.cdd-cal-day {
+  height: 30px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--cdd-ink);
+  font-size: 12px; font-family: inherit; cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.cdd-cal-day:hover { background: var(--cdd-cream); }
+/* Today is marked with a ring so it never competes with the selected day. */
+.cdd-cal-day.is-today { box-shadow: inset 0 0 0 1px var(--cdd-hairline); font-weight: 700; }
+.cdd-cal-day.is-selected {
+  background: var(--cdd-accent); color: var(--cdd-white); font-weight: 700;
+  box-shadow: none;
+}
+.cdd-cal-day.is-disabled {
+  color: var(--cdd-ink-faint); cursor: not-allowed; background: transparent;
+}
+
+.cdd-cal-foot {
+  display: flex; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--cdd-hairline);
+}
+.cdd-cal-action {
+  flex: 1; padding: 6px 0; border: 1px solid var(--cdd-hairline); border-radius: 7px;
+  background: var(--cdd-white); color: var(--cdd-ink);
+  font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
+  transition: background .14s, color .14s, border-color .14s;
+}
+.cdd-cal-action:hover {
+  background: var(--cdd-ink); border-color: var(--cdd-ink); color: var(--cdd-white);
+}
+
+.cdd-rail.is-collapsed .cdd-rail-title,
+.cdd-rail.is-collapsed .cdd-nav-label { display: none; }
+.cdd-rail.is-collapsed .cdd-nav-item { justify-content: center; padding: 10px 0; }
+.cdd-rail.is-collapsed .cdd-rail-exit { justify-content: center; padding-left: 0; padding-right: 0; }
+.cdd-rail.is-collapsed .cdd-rail-user { justify-content: center; padding-left: 0; padding-right: 0; }
+.cdd-rail.is-collapsed .cdd-rail-who { display: none; }
+.cdd-rail.is-collapsed .cdd-rail-brand { justify-content: center; padding: 2px 0 0; }
+
+/* ── Main column ──────────────────────────────────────────────────── */
+/* The shell fills the viewport and nothing outside it scrolls, so there is no
+   window scrollbar. The main column is a flex stack: the band is a fixed-size
+   first child and .cdd-scroll takes the rest, which means content scrolls
+   inside that box and never travels underneath the title. */
+html, body { height: 100%; overflow: hidden; }
+
+.cdd-main {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: calc(var(--cdd-rail-w) + 36px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 24px 0;
+  transition: left .18s ease;
+}
+.cdd-rail.is-collapsed ~ .cdd-main { left: calc(var(--cdd-rail-w-collapsed) + 36px); }
+
+.cdd-scroll {
+  flex: 1 1 auto;
+  min-height: 0;          /* lets the flex child actually shrink and scroll */
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 36px;
+  scrollbar-gutter: stable;
+}
+
+/* Header band — the non-scrolling first row of the main column. */
+.cdd-band {
+  flex: 0 0 auto;
+  background: var(--cdd-white);
+  border: 1px solid var(--cdd-hairline);
+  border-radius: 14px;
+  padding: 20px 24px;
+  margin-bottom: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+/* Narrow screens put the rail in the flow across the top, so the fixed shell
+   is handed back to normal document flow and the window scrolls again. */
+@media (max-width: 860px) {
+  html, body { height: auto; overflow: visible; }
+  .cdd-rail {
+    position: static;
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 12px 0;
+    overflow-x: auto;
+  }
+  .cdd-rail.is-collapsed { width: auto; }
+  .cdd-rail-toggle { display: none; }
+  .cdd-rail-nav { flex-direction: row; }
+  .cdd-rail-exit { margin-top: 0; margin-left: auto; border-top: 0; border-left: 1px solid var(--cdd-hairline); padding-top: 10px; }
+  .cdd-rail-user { margin-top: 0; border-top: 0; padding-top: 10px; }
+  .cdd-rail-who { display: none; }
+  .cdd-nav-label { display: none; }
+  .cdd-main, .cdd-rail.is-collapsed ~ .cdd-main {
+    position: static;
+    display: block;
+    padding: 14px 12px 32px;
+  }
+  .cdd-scroll { overflow: visible; padding-bottom: 0; }
+}
+
+.cdd-band h2 {
+  margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
+  color: var(--cdd-ink) !important;
+}
+.cdd-band .cdd-actions { display: flex; gap: 8px; }
+.cdd-band button {
+  padding: 8px 16px; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink) !important;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.cdd-band button:hover {
+  background: var(--cdd-ink); border-color: var(--cdd-ink);
+  color: var(--cdd-cream) !important;
+}
+
+/* Filters */
+.cdd-filters {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+  position: relative; z-index: 30;   /* keeps the calendar popup above the tiles */
+  background: var(--cdd-white); border: 1px solid var(--cdd-hairline);
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
+}
+.cdd-field { display: flex; flex-direction: column; gap: 5px; min-width: 140px; }
+.cdd-field label {
+  font-size: 10px; color: var(--cdd-ink-muted); font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.cdd-field select {
+  padding: 8px 10px; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 13px; cursor: pointer;
+  transition: border-color .15s;
+}
+.cdd-field select:focus { outline: none; border-color: var(--cdd-ink); }
+.cdd-clear {
+  padding: 8px 14px; border: 1px solid var(--cdd-ink); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 12px;
+  cursor: pointer; font-weight: 600;
+  transition: background .15s, color .15s;
+}
+.cdd-clear:hover { background: var(--cdd-ink); color: var(--cdd-white); }
+
+/* KPI cards */
+.cdd-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.cdd-kpi {
+  background: var(--cdd-white); border: 1px solid var(--cdd-hairline);
+  border-radius: 12px; padding: 16px 18px;
+  transition: transform .12s, box-shadow .12s, border-color .12s;
+}
+.cdd-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(17,17,17,0.08); border-color: var(--cdd-ink); }
+.cdd-kpi .v { font-size: 28px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; color: var(--cdd-ink); }
+.cdd-kpi .l { font-size: 12px; color: var(--cdd-ink-muted); margin-top: 8px; font-weight: 500; }
+.cdd-kpi .s { font-size: 11px; color: var(--cdd-ink-faint); margin-top: 3px; }
+
+/* Charts */
+.cdd-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+.cdd-charts-row.is-single { grid-template-columns: 1fr; }
+@media (max-width: 1100px) { .cdd-charts-row { grid-template-columns: 1fr; } }
+.cdd-chart-wrap {
+  background: var(--cdd-white); border: 1px solid var(--cdd-hairline);
+  border-radius: 12px; padding: 18px 20px; height: 360px;
+}
+
+/* Tables */
+.cdd-section-title { font-size: 14px; font-weight: 700; margin: 0 0 10px; color: var(--cdd-ink); }
+.cdd-table-wrap {
+  max-height: 480px; overflow: auto; border: 1px solid var(--cdd-hairline);
+  border-radius: 12px; background: var(--cdd-white); margin-bottom: 20px;
+}
+#cova-clinic-app table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; color: var(--cdd-ink); }
+#cova-clinic-app th, #cova-clinic-app td { padding: 9px 12px; text-align: center; border-bottom: 1px solid var(--cdd-hairline); }
+#cova-clinic-app th {
+  background: var(--cdd-cream);
+  font-weight: 700; position: sticky; top: 0; z-index: 2;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--cdd-ink-muted);
+}
+#cova-clinic-app th:first-child, #cova-clinic-app td:first-child { text-align: left; }
+#cova-clinic-app td.cond { font-weight: 600; position: sticky; left: 0; background: var(--cdd-white); z-index: 1; color: var(--cdd-ink); }
+#cova-clinic-app tbody tr:hover td { background: var(--cdd-wash); }
+#cova-clinic-app tbody tr:hover td.cond { background: var(--cdd-wash); }
+.pct-bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--cdd-accent); vertical-align: middle; margin-right: 6px; }
+
+#cova-clinic-app tr.total-row td {
+  font-weight: 800;
+  background: var(--cdd-ink) !important;
+  color: var(--cdd-white) !important;
+  position: sticky; bottom: 0; z-index: 2; border-bottom: none;
+}
+#cova-clinic-app tr.total-row td.cond { background: var(--cdd-ink) !important; color: var(--cdd-white) !important; }
+
+/* Heat cells: a single-hue (neutral) sequential ramp, light -> dark. The 2px
+   white gutter keeps adjacent filled cells from reading as one block. */
+.heat { font-weight: 600; border-radius: 4px; box-shadow: inset 0 0 0 2px var(--cdd-white); }
+
+.cdd-loading { padding: 40px; text-align: center; color: var(--cdd-ink-muted); }
+.cdd-empty { padding: 30px; text-align: center; color: var(--cdd-ink-muted); font-size: 13px; }
+.cdd-note { font-size: 12px; color: var(--cdd-ink-muted); margin: -8px 0 18px; }
+
+/* ── Scrollbars ───────────────────────────────────────────────────── */
+/* Every scroll area on the page (main pane, tables, the rail, wide charts)
+   gets the same thin, low-contrast bar, scoped so the rest of the desk is
+   untouched.
+
+   Two mechanisms are needed, and they must not both apply at once: Chrome
+   honours the standard `scrollbar-width` and then IGNORES ::-webkit-scrollbar
+   sizing, and its `thin` is ~10px. So the standard property is gated behind
+   @supports to reach only engines without the WebKit pseudo-elements
+   (Firefox), leaving Chrome and Safari on the 6px rule below. */
+
+@supports not selector(::-webkit-scrollbar) {
+  .cdd-scroll,
+  .cdd-rail,
+  .cdd-rail-nav,
+  .cdd-table-wrap,
+  #cova-clinic-app .cdd-chart-wrap {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(17,17,17,0.28) transparent;
+  }
+}
+
+.cdd-scroll::-webkit-scrollbar,
+.cdd-rail::-webkit-scrollbar,
+.cdd-rail-nav::-webkit-scrollbar,
+.cdd-table-wrap::-webkit-scrollbar,
+#cova-clinic-app .cdd-chart-wrap::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.cdd-scroll::-webkit-scrollbar-track,
+.cdd-rail::-webkit-scrollbar-track,
+.cdd-rail-nav::-webkit-scrollbar-track,
+.cdd-table-wrap::-webkit-scrollbar-track,
+#cova-clinic-app .cdd-chart-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cdd-scroll::-webkit-scrollbar-thumb,
+.cdd-rail::-webkit-scrollbar-thumb,
+.cdd-rail-nav::-webkit-scrollbar-thumb,
+.cdd-table-wrap::-webkit-scrollbar-thumb,
+#cova-clinic-app .cdd-chart-wrap::-webkit-scrollbar-thumb {
+  background: rgba(17,17,17,0.22);
+  border-radius: 3px;
+}
+
+.cdd-scroll::-webkit-scrollbar-thumb:hover,
+.cdd-rail::-webkit-scrollbar-thumb:hover,
+.cdd-rail-nav::-webkit-scrollbar-thumb:hover,
+.cdd-table-wrap::-webkit-scrollbar-thumb:hover,
+#cova-clinic-app .cdd-chart-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(17,17,17,0.42);
+}
+
+/* Where both axes can scroll, the corner square would otherwise show the
+   browser's default grey. */
+.cdd-scroll::-webkit-scrollbar-corner,
+.cdd-table-wrap::-webkit-scrollbar-corner {
+  background: transparent;
+}

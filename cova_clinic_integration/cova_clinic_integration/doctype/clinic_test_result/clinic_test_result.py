@@ -4,6 +4,8 @@
 # import frappe
 from frappe.model.document import Document
 
+from cova_clinic_integration.member_link import set_cova_member
+
 
 class ClinicTestResult(Document):
 	# begin: auto-generated types
@@ -22,9 +24,11 @@ class ClinicTestResult(Document):
 		full_name: DF.Data | None
 		member_type: DF.Literal["", "Active", "Pre Employment"]
 		payroll_number: DF.Data | None
-		request_id: DF.Data | None
+		request_id: DF.Link | None
 		results: DF.Table[TestResult]
 		test_package: DF.Data | None
 	# end: auto-generated types
 
-	pass
+	def validate(self):
+		# Keeps the member's Connections tab complete — see member_link.
+		set_cova_member(self)

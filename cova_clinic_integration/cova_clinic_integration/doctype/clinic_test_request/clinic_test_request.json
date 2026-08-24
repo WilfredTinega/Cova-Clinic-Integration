@@ -8,6 +8,7 @@
  "field_order": [
   "member_type",
   "employee",
+  "cova_member",
   "payroll_number",
   "nationa_id",
   "date_of_birth",
@@ -42,6 +43,13 @@
    "options": "Employee"
   },
   {
+   "fieldname": "cova_member",
+   "fieldtype": "Link",
+   "label": "Cova Member",
+   "options": "Cova Members",
+   "description": "Filled in automatically; links this record back to the member's Cova record."
+  },
+  {
    "depends_on": "eval:doc.member_type=='Active'",
    "fetch_from": "employee.employee_number",
    "fetch_if_empty": 1,
@@ -66,8 +74,9 @@
   {
    "depends_on": "eval:doc.member_type=='Pre Employment'",
    "fieldname": "phone_number",
-   "fieldtype": "Phone",
-   "label": "Phone Number"
+   "fieldtype": "Data",
+   "label": "Phone Number",
+   "options": "Phone"
   },
   {
    "fieldname": "column_break_dhim",
@@ -86,9 +95,9 @@
   {
    "depends_on": "eval:doc.member_type=='Pre Employment'",
    "fieldname": "gender",
-   "fieldtype": "Select",
+   "fieldtype": "Link",
    "label": "Gender",
-   "options": "\nMale\nFemale"
+   "options": "Gender"
   },
   {
    "fieldname": "test_package",
@@ -129,7 +138,18 @@
    "options": "Clinic Test Result"
   }
  ],
- "links": [],
+ "links": [
+  {
+   "group": "Results",
+   "link_doctype": "Clinic Test Result",
+   "link_fieldname": "request_id"
+  },
+  {
+   "group": "Membership",
+   "link_doctype": "Cova Members",
+   "link_fieldname": "test_request_reference"
+  }
+ ],
  "modified": "2026-05-31 14:56:57.617076",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",

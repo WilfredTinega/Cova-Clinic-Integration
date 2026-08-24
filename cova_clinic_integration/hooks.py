@@ -64,11 +64,11 @@ override_whitelisted_methods = {
 # add the bulk buttons on the list view.
 doctype_js = {
 	"Employee": "public/js/employee.js",
-	"Job Applicant": "public/js/job_applicant.js",
+	"Job Offer": "public/js/job_offer.js",
 }
 doctype_list_js = {
 	"Employee": "public/js/employee_list.js",
-	"Job Applicant": "public/js/job_applicant_list.js",
+	"Job Offer": "public/js/job_offer_list.js",
 }
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -110,21 +110,21 @@ doctype_list_js = {
 # Installation
 # ------------
 
-# before_install = "cova_clinic_integration.install.before_install"
-after_install = "cova_clinic_integration.install.install_clinic_fields"
+# before_install = "cova_clinic_integration.setup.before_install"
+after_install = "cova_clinic_integration.setup.after_install"
 
 # Migration
 # ------------
 # Re-assert the integration's fields on every migrate (idempotent). Needed
 # because normal fields on a standard doctype can be dropped when that doctype
 # is re-imported during migrate.
-after_migrate = "cova_clinic_integration.install.install_clinic_fields"
+after_migrate = "cova_clinic_integration.setup.after_install"
 
 # Uninstallation
 # ------------
-# Remove the integration's fields (and their columns) from Job Applicant /
+# Remove the integration's fields (and their columns) from Job Offer /
 # Employee when the app is uninstalled.
-before_uninstall = "cova_clinic_integration.install.uninstall_clinic_fields"
+before_uninstall = "cova_clinic_integration.setup.before_uninstall"
 
 # after_uninstall = "cova_clinic_integration.uninstall.after_uninstall"
 
@@ -172,13 +172,17 @@ before_uninstall = "cova_clinic_integration.install.uninstall_clinic_fields"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+# The COVA biodata is mandatory on offers for the company configured in Cova
+# Clinic Settings. Enforced server-side so the API and imports are covered too,
+# not just the form.
+doc_events = {
+	"Job Offer": {
+		"validate": "cova_clinic_integration.setup.job_offer_validate",
+	}
+}
+
+# Publishes the configured clinic company to the client (frappe.boot).
+extend_bootinfo = ["cova_clinic_integration.setup.extend_bootinfo"]
 
 # Scheduled Tasks
 # ---------------
@@ -204,7 +208,7 @@ before_uninstall = "cova_clinic_integration.install.uninstall_clinic_fields"
 # Testing
 # -------
 
-# before_tests = "cova_clinic_integration.install.before_tests"
+before_tests = "cova_clinic_integration.setup.before_tests"
 
 # Extend DocType Class
 # ------------------------------

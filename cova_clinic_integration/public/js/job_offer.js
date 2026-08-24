@@ -1,10 +1,34 @@
 // Copyright (c) 2026, Upande Limited and contributors
 // For license information, please see license.txt
-// Job Applicant form — COVA pre-employment 'Register & Request Wellness' button.
+// Job Offer form — COVA pre-employment 'Register & Request Wellness' button.
 // Ported from the live "Cova Medical Cover" Client Script.
 
-frappe.ui.form.on('Job Applicant', {
+// National ID and Phone Number are required before a candidate can be sent to
+// COVA, so they are mandatory on offers for the company configured in Cova
+// Clinic Settings. The server enforces the same rule in job_offer.validate();
+// this only mirrors it in the form so the asterisks show up.
+function toggle_cova_mandatory(frm) {
+    const clinic_company = frappe.boot.cova_clinic_company;
+    const applies = Boolean(clinic_company) && frm.doc.company === clinic_company;
+    ['custom_national_id', 'custom_phone_number'].forEach(function(fieldname) {
+        if (frm.fields_dict[fieldname]) {
+            frm.toggle_reqd(fieldname, applies);
+        }
+    });
+}
+
+frappe.ui.form.on('Job Offer', {
+    company: function(frm) {
+        toggle_cova_mandatory(frm);
+    },
+
+    onload: function(frm) {
+        toggle_cova_mandatory(frm);
+    },
+
     refresh: function(frm) {
+        toggle_cova_mandatory(frm);
+
         if (frm.is_new()) {
             return;
         }
@@ -35,7 +59,7 @@ frappe.ui.form.on('Job Applicant', {
                         },
                         body: JSON.stringify({
                             action: 'register_preemployment_candidate',
-                            applicant: frm.doc.name
+                            job_offer: frm.doc.name
                         })
                     })
                     .then(function(res) { return res.text(); })

@@ -1,18 +1,18 @@
 {
  "app": "cova_clinic_integration",
- "creation": "2026-07-30 12:25:43.049368",
+ "creation": "2026-08-14 14:28:10.394742",
  "docstatus": 0,
  "doctype": "Workspace Sidebar",
- "header_icon": "ambulance",
+ "header_icon": "",
  "idx": 0,
  "items": [
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "align-center-vertical",
+   "icon": "home",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Cova Clinic",
+   "label": "Home",
    "link_to": "Cova Clinic",
    "link_type": "Workspace",
    "open_in_new_tab": 1,
@@ -22,7 +22,7 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "album",
+   "icon": "calendar-check",
    "indent": 0,
    "keep_closed": 0,
    "label": "Clinic Checkin",
@@ -35,7 +35,7 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "ambulance",
+   "icon": "circle-user-round",
    "indent": 0,
    "keep_closed": 0,
    "label": "Cova Member",
@@ -48,7 +48,20 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "test-tube-diagonal",
+   "icon": "stethoscope",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Medical Case",
+   "link_to": "Medical Case",
+   "link_type": "DocType",
+   "open_in_new_tab": 1,
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "git-pull-request-arrow",
    "indent": 0,
    "keep_closed": 0,
    "label": "Clinic Test Request",
@@ -61,7 +74,7 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "squares-unite",
+   "icon": "presentation",
    "indent": 0,
    "keep_closed": 0,
    "label": "Clinic Test Results",
@@ -74,22 +87,48 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "chart-column-stacked",
+   "icon": "money-coins-1",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Clinic Visit Cost and Benefit Balances",
+   "label": "Cost and Benefit Balances",
    "link_to": "Clinic Visit Cost",
+   "link_type": "DocType",
+   "open_in_new_tab": 1,
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "file-text",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Health Monthly Report",
+   "link_to": "Health Monthly Report",
+   "link_type": "DocType",
+   "open_in_new_tab": 1,
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "settings",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Cova Clinic Settings",
+   "link_to": "Cova Clinic Settings",
    "link_type": "DocType",
    "open_in_new_tab": 1,
    "show_arrow": 0,
    "type": "Link"
   }
  ],
- "modified": "2026-07-30 13:27:06.484655",
+ "modified": "2026-08-24 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
- "name": "Clinic",
+ "name": "Cova Clinic",
  "owner": "Administrator",
  "standard": 1,
- "title": "Clinic"
+ "title": "Cova Clinic"
 }

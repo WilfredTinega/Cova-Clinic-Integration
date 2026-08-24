@@ -2,9 +2,20 @@
 // For license information, please see license.txt
 // Employee list — bulk COVA register / request-test / deactivate.
 // Ported from the live "Cova" Client Script.
+//
+// ERPNext ships its own frappe.listview_settings["Employee"] (status
+// indicators, the default Active filter, add_fields) and this file is
+// concatenated after it into the same __list_js blob, so a plain assignment
+// would silently drop all of it. Extend the existing object and chain onload.
 
-frappe.listview_settings['Employee'] = {
+(function() {
+const DOCTYPE = 'Employee';
+const prior = frappe.listview_settings[DOCTYPE] || {};
+const prior_onload = prior.onload;
+
+frappe.listview_settings[DOCTYPE] = Object.assign({}, prior, {
     onload: function(listview) {
+        if (prior_onload) { prior_onload.call(this, listview); }
 
         const LOCKED_COMPANY = 'Karen Roses';
         const TEST_PACKAGES = ['Pre Employment Wellness', 'Cholinesterase', 'Food Handler', 'Annual Medical', 'Exit Medical'];
@@ -308,4 +319,5 @@ frappe.listview_settings['Employee'] = {
             });
         }, __('Clinic'));
     }
-};
+});
+})();

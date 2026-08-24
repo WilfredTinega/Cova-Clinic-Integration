@@ -1,8 +1,8 @@
 # Copyright (c) 2026, Upande Limited and contributors
 # For license information, please see license.txt
 
-# import frappe
 from frappe.model.document import Document
+from frappe.model.naming import append_number_if_name_exists, make_autoname
 
 
 class CovaMembers(Document):
@@ -21,7 +21,7 @@ class CovaMembers(Document):
 		date_of_birth: DF.Datetime | None
 		employee: DF.Link | None
 		full_name: DF.Data | None
-		gender: DF.Literal["", "Male", "Female"]
+		gender: DF.Link | None
 		last_visit: DF.Date | None
 		member_type: DF.Literal["", "Active", "Pre Employment"]
 		national_id: DF.Data | None
@@ -37,4 +37,29 @@ class CovaMembers(Document):
 		wallet_reference: DF.Data | None
 	# end: auto-generated types
 
-	pass
+	def autoname(self):
+		"""Name the member after whoever it identifies.
+
+		The doctype used to declare ``{full_name}.-.{national_id}.-.{employee}``
+		under the "Expression" naming rule, but that rule wants a ``format:``
+		prefix — frappe matched no rule at all and every row fell through to a
+		hash (``mv2picvuc9``).
+
+		A plain ``format:`` string does not fit either, because the two member
+		types carry different identifiers and the blank one would leave a dangling
+		separator:
+
+		* Active         - Employee + payroll number, national id usually empty
+		* Pre Employment - national id, no Employee yet
+
+		So the name is joined from the parts that are actually present.
+		"""
+		identifier = self.national_id or self.payroll_number or self.employee
+		parts = [str(p).strip() for p in (self.full_name, identifier) if p and str(p).strip()]
+
+		if not parts:
+			# Nothing to name it after — a hash is still better than failing the insert.
+			self.name = make_autoname("hash", self.doctype)
+			return
+
+		self.name = append_number_if_name_exists(self.doctype, " - ".join(parts))
