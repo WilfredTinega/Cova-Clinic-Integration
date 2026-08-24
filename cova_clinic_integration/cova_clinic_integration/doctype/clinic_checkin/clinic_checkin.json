@@ -15,6 +15,7 @@
   "time",
   "api_tab",
   "employee",
+  "cova_member",
   "column_break_dret",
   "full_name",
   "column_break_mjea",
@@ -40,6 +41,13 @@
    "in_standard_filter": 1,
    "label": "Employee",
    "options": "Employee"
+  },
+  {
+   "fieldname": "cova_member",
+   "fieldtype": "Link",
+   "label": "Cova Member",
+   "options": "Cova Members",
+   "description": "Filled in automatically; links this record back to the member's Cova record."
   },
   {
    "fetch_from": "employee.employee_number",

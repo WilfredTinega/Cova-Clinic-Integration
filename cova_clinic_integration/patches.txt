@@ -4,3 +4,5 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+cova_clinic_integration.patches.move_cova_fields_to_job_offer
+cova_clinic_integration.patches.link_existing_records_to_cova_members

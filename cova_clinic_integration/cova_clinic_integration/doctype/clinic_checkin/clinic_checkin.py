@@ -4,6 +4,8 @@
 import frappe
 from frappe.model.document import Document
 
+from cova_clinic_integration.member_link import set_cova_member
+
 SICK_LEAVE_TYPE = "Sick Leave (Full Pay)"
 
 
@@ -30,6 +32,11 @@ class ClinicCheckin(Document):
 		time_in: DF.Datetime | None
 		time_out: DF.Datetime | None
 	# end: auto-generated types
+
+	def validate(self):
+		# Punches identify their employee through b_employee, which set_cova_member
+		# handles — see member_link.
+		set_cova_member(self)
 
 	def after_insert(self):
 		# "Sick Leave Application" — auto-create an approved Sick Leave for the

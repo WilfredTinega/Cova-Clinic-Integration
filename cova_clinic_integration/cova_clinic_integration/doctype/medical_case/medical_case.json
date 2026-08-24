@@ -1,0 +1,65 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "allow_rename": 1,
+ "autoname": "field:cases",
+ "creation": "2026-05-31 12:18:40.498212",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "cases"
+ ],
+ "fields": [
+  {
+   "fieldname": "cases",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Case",
+   "reqd": 1,
+   "unique": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [
+  {
+   "group": "Results",
+   "link_doctype": "Test Result",
+   "link_fieldname": "test",
+   "parent_doctype": "Clinic Test Result",
+   "table_fieldname": "results",
+   "is_child_table": 1
+  },
+  {
+   "group": "Reports",
+   "link_doctype": "Health Report",
+   "link_fieldname": "medical_case",
+   "parent_doctype": "Health Monthly Report",
+   "table_fieldname": "medical_cases",
+   "is_child_table": 1
+  }
+ ],
+ "modified": "2026-08-14 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Medical Case",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

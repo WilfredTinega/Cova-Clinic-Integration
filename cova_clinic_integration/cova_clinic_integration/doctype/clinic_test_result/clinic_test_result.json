@@ -9,6 +9,7 @@
   "member_type",
   "column_break_eoqa",
   "employee",
+  "cova_member",
   "column_break_eibz",
   "full_name",
   "column_break_oiff",
@@ -49,6 +50,13 @@
    "label": "Employee",
    "mandatory_depends_on": "eval:doc.member_type=='Active'",
    "options": "Employee"
+  },
+  {
+   "fieldname": "cova_member",
+   "fieldtype": "Link",
+   "label": "Cova Member",
+   "options": "Cova Members",
+   "description": "Filled in automatically; links this record back to the member's Cova record."
   },
   {
    "fieldname": "column_break_eibz",
@@ -112,8 +120,9 @@
   },
   {
    "fieldname": "request_id",
-   "fieldtype": "Data",
-   "label": "Request ID"
+   "fieldtype": "Link",
+   "label": "Request ID",
+   "options": "Clinic Test Request"
   },
   {
    "fieldname": "section_break_hpjg",
@@ -136,7 +145,23 @@
    "label": "COVA Raw"
   }
  ],
- "links": [],
+ "links": [
+  {
+   "group": "Requests",
+   "link_doctype": "Clinic Test Request",
+   "link_fieldname": "linked_test_result"
+  },
+  {
+   "group": "Membership",
+   "link_doctype": "Cova Members",
+   "link_fieldname": "test_result_reference"
+  },
+  {
+   "group": "Recruitment",
+   "link_doctype": "Job Offer",
+   "link_fieldname": "custom_linked_test_result"
+  }
+ ],
  "modified": "2026-07-30 12:18:55.430750",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",

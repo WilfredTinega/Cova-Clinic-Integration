@@ -5,6 +5,8 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "company",
+  "settings_tab",
   "base_url",
   "api_key",
   "column_break_brge",
@@ -63,11 +65,22 @@
    "fieldname": "access_token",
    "fieldtype": "Text",
    "label": "Access Token"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company"
+  },
+  {
+   "fieldname": "settings_tab",
+   "fieldtype": "Tab Break",
+   "label": "Settings"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-07-29 16:10:59.482337",
+ "modified": "2026-08-14 14:10:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Cova Clinic Settings",
@@ -77,15 +90,23 @@
    "create": 1,
    "delete": 1,
    "email": 1,
-   "export": 1,
    "print": 1,
    "read": 1,
-   "report": 1,
    "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
    "share": 1,
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []
