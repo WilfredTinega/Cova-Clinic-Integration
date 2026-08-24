@@ -208,7 +208,7 @@ extend_bootinfo = ["cova_clinic_integration.setup.extend_bootinfo"]
 # Testing
 # -------
 
-# before_tests = "cova_clinic_integration.setup.before_tests"
+before_tests = "cova_clinic_integration.setup.before_tests"
 
 # Extend DocType Class
 # ------------------------------

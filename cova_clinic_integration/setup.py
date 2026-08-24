@@ -370,6 +370,92 @@ def uninstall_clinic_fields():
 	frappe.db.commit()
 
 
+# ─── tests ────────────────────────────────────────────────────────────────
+
+TEST_COMPANY = "_Test Company"
+
+
+def _make_test_company():
+	"""Put a Company on the site so the Employee fixtures can be built.
+
+	Installing ERPNext does not create one — the setup wizard does, and CI never
+	runs it. This is the same route hrms takes in its own CI.
+	"""
+	from frappe.utils import now_datetime
+
+	year = now_datetime().year
+	args = {
+		"currency": "KES",
+		"full_name": "Test User",
+		"company_name": TEST_COMPANY,
+		"timezone": "Africa/Nairobi",
+		"company_abbr": "_TC",
+		"country": "Kenya",
+		"fy_start_date": "{0}-01-01".format(year),
+		"fy_end_date": "{0}-12-31".format(year),
+		"language": "english",
+		"company_tagline": "Testing",
+		"email": "test@example.com",
+		"password": "test",
+		"chart_of_accounts": "Standard",
+	}
+
+	try:
+		from frappe.desk.page.setup_wizard.setup_wizard import setup_complete
+
+		setup_complete(args)
+	except Exception:
+		frappe.log_error(title="COVA before_tests setup wizard", message=frappe.get_traceback())
+		frappe.db.rollback()
+
+	if frappe.db.exists("Company", TEST_COMPANY):
+		return
+
+	# The wizard returns early on a site already flagged as set up, and swallows
+	# its own stage failures. ERPNext's programmatic entry point does neither: it
+	# installs the presets and the company directly, and raises on failure — so a
+	# site that cannot be prepared fails the run here rather than in every test.
+	from erpnext.setup.setup_wizard.setup_wizard import setup_complete as erpnext_setup_complete
+
+	erpnext_setup_complete(args)
+
+
+def _ensure_genders():
+	"""The Employee fixtures set ``gender``, a Link to Gender. Those records are
+	part of the setup wizard's fixtures, so a site that never ran it has none."""
+	for gender in ("Male", "Female", "Other"):
+		if not frappe.db.exists("Gender", gender):
+			frappe.get_doc({"doctype": "Gender", "gender": gender}).insert(
+				ignore_permissions=True, ignore_if_duplicate=True
+			)
+
+
+def before_tests():
+	"""Prepare a freshly reinstalled site for this app's test suite.
+
+	Run once by ``bench run-tests --app cova_clinic_integration``. Two things the
+	suite needs are absent on a bare CI site:
+
+	  * a Company and the Gender records — every Employee fixture needs both,
+	    and both are laid down by the setup wizard, not by installing ERPNext;
+	  * this app's fields and Connections on Employee/Job Offer, which
+	    ``after_install`` only writes when developer_mode is on.
+
+	``after_install`` is idempotent, so re-running it here just asserts the
+	wiring is present rather than installing it a second time.
+	"""
+	frappe.clear_cache()
+
+	if not frappe.db.count("Company"):
+		_make_test_company()
+
+	_ensure_genders()
+
+	after_install()
+
+	frappe.db.commit()  # nosemgrep
+
+
 # ─── boot ─────────────────────────────────────────────────────────────────
 
 
