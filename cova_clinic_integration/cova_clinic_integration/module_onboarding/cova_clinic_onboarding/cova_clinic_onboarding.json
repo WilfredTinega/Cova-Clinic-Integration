@@ -1,0 +1,75 @@
+{
+ "allow_roles": [
+  {
+   "role": "HR Manager"
+  },
+  {
+   "role": "HR User"
+  }
+ ],
+ "creation": "2026-08-28 15:24:43.135894",
+ "docstatus": 0,
+ "doctype": "Module Onboarding",
+ "idx": 0,
+ "is_complete": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Cova Clinic Onboarding",
+ "owner": "Administrator",
+ "steps": [
+  {
+   "idx": 1,
+   "step": "Fill the COVA Block on a Job Offer"
+  },
+  {
+   "idx": 2,
+   "step": "Request a Pre-Employment Wellness Test"
+  },
+  {
+   "idx": 3,
+   "step": "Register an Employee to Cova"
+  },
+  {
+   "idx": 4,
+   "step": "Request a Medical Test for an Employee"
+  },
+  {
+   "idx": 5,
+   "step": "Deactivate an Employee from Cova"
+  },
+  {
+   "idx": 6,
+   "step": "Review the Cova Member Register"
+  },
+  {
+   "idx": 7,
+   "step": "Track Clinic Test Requests"
+  },
+  {
+   "idx": 8,
+   "step": "Read Clinic Test Results"
+  },
+  {
+   "idx": 9,
+   "step": "Check Cost and Benefit Balances"
+  },
+  {
+   "idx": 10,
+   "step": "Follow Clinic Checkins"
+  },
+  {
+   "idx": 11,
+   "step": "Curate the Medical Case Catalogue"
+  },
+  {
+   "idx": 12,
+   "step": "Review the Health Monthly Report"
+  },
+  {
+   "idx": 13,
+   "step": "Open the Clinic Health Dashboard"
+  }
+ ],
+ "title": "Clinic Integration Setup"
+}

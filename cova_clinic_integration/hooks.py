@@ -42,7 +42,14 @@ override_whitelisted_methods = {
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/cova_clinic_integration/css/cova_clinic_integration.css"
-# app_include_js = "/assets/cova_clinic_integration/js/cova_clinic_integration.js"
+# Loaded on every desk page: it registers the "Walk Me Through" button and the
+# highlight re-alignment on each doctype that ships a Form Tour, so it cannot
+# live behind a per-doctype doctype_js entry.
+#
+# Referenced as a bundle, not as a "/assets/..." path: only bundled names are
+# resolved through assets.json to a content-hashed file, which is what stops a
+# browser serving yesterday's copy after a deploy.
+app_include_js = "cova_clinic_integration.bundle.js"
 
 # include js, css files in header of web template
 # web_include_css = "/assets/cova_clinic_integration/css/cova_clinic_integration.css"

@@ -1,0 +1,21 @@
+{
+ "action": "Go to Page",
+ "action_label": "Open the Cova Clinic workspace",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "Every doctype in this app hangs off the **Cova Clinic** workspace, and the sidebar on the left mirrors it.\n\nTwo of them you fill in yourself \u2014 **Cova Clinic Settings** and **Medical Case**. The rest are written *for* you: COVA pushes visits, test results and monthly reports in through the integration, and the clinic's own check-ins arrive the same way. The steps below walk the sidebar top to bottom.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Find Your Way Around the Cova Clinic Workspace",
+ "owner": "Administrator",
+ "path": "cova-clinic",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Find Your Way Around the Cova Clinic Workspace",
+ "validate_action": 1
+}

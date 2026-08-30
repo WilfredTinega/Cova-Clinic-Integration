@@ -1,0 +1,21 @@
+{
+ "action": "Go to Page",
+ "action_label": "Deactivate a leaver",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this does.</b> When somebody leaves, open their employee page and use <b>Clinic &rsaquo; Deactivate from Cova</b>. That tells the clinic they are no longer covered, so they are not treated by mistake and you are not billed for it.<br><br>If they need a final health check on the way out, tick the box for it and that check is booked at the same time.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Deactivate an Employee from Cova",
+ "owner": "Administrator",
+ "path": "List/Employee",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Sign off someone who has left",
+ "validate_action": 1
+}

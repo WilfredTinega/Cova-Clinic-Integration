@@ -1,0 +1,22 @@
+{
+ "action": "Create Entry",
+ "action_label": "Visit cost overview",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this is.</b> One page for each time somebody went to the clinic, listing what they were given and what each thing cost. It also shows how much of their cover is left afterwards \u2014 so a figure going down over the year is normal, and it is what is still available, not what was spent.<br><br><b>A guided tour.</b> Opening this step walks you through the page one box at a time and explains what each one is for. You can start it again whenever you like with the small <b>i</b> button at the top of the page.<br><br><b>Where to find it.</b> To see the ones already there, open <b>Clinic Visit Cost</b> from the menu on the left.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "form_tour": "Clinic Visit Cost Walkthrough",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Check Cost and Benefit Balances",
+ "owner": "Administrator",
+ "reference_document": "Clinic Visit Cost",
+ "show_form_tour": 1,
+ "show_full_form": 1,
+ "title": "Clinic Visit Cost \u2014 what a visit cost",
+ "validate_action": 1
+}

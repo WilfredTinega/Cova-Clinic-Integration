@@ -1,0 +1,22 @@
+{
+ "action": "Create Entry",
+ "action_label": "Job Offer overview",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this is.</b> When you hire someone, the clinic still needs to know who they are before they can be sent for a health check. This page has a small section for that: their ID number, phone number, date of birth and whether they are male or female. Most of it fills in by itself from the person's application.<br><br><b>A guided tour.</b> Opening this step walks you through the page one box at a time and explains what each one is for. You can start it again whenever you like with the small <b>i</b> button at the top of the page.<br><br><b>Where to find it.</b> Job Offer is found under <b>HR &rsaquo; Recruitment</b>. From the list you can sign up several people at once.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "form_tour": "Cova Pre-Employment on Job Offer",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Fill the COVA Block on a Job Offer",
+ "owner": "Administrator",
+ "reference_document": "Job Offer",
+ "show_form_tour": 1,
+ "show_full_form": 1,
+ "title": "Job Offer \u2014 details the clinic needs",
+ "validate_action": 1
+}

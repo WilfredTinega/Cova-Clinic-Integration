@@ -29,86 +29,93 @@ CLINIC_FIELDS = {
 		# is allow_on_submit; the tracking fields are no_copy so an amended offer
 		# starts clean.
 		{
-			"fieldname": "custom_cova_section",
+			"fieldname": "cova_section",
 			"label": "COVA Pre-Employment",
 			"fieldtype": "Section Break",
 			"insert_after": "company",
 			"depends_on": _JO_DEPENDS,
 		},
 		{
-			"fieldname": "custom_national_id",
+			"fieldname": "national_id",
 			"label": "National ID",
 			"fieldtype": "Data",
-			"insert_after": "custom_cova_section",
+			"insert_after": "cova_section",
 			"allow_on_submit": 1,
 		},
 		{
-			"fieldname": "custom_phone_number",
+			"fieldname": "phone_number",
 			"label": "Phone Number",
 			"fieldtype": "Data",
 			"options": "Phone",
-			"insert_after": "custom_national_id",
+			"insert_after": "national_id",
 			"allow_on_submit": 1,
+			# Job Applicant carries a (mandatory, on the csf_ke variant) phone
+			# number, so the offer should not make HR retype it. fetch_if_empty
+			# keeps the field editable and only fills a blank one — phone_number
+			# is one of the two REQUIRED_FIELDS below, so it must stay writable
+			# for an applicant who has none on file.
+			"fetch_from": "job_applicant.phone_number",
+			"fetch_if_empty": 1,
 		},
 		{
-			"fieldname": "custom_column_break_1ke4q",
+			"fieldname": "cova_column_break_1",
 			"fieldtype": "Column Break",
-			"insert_after": "custom_phone_number",
+			"insert_after": "phone_number",
 		},
 		{
-			"fieldname": "custom_date_of_birth",
+			"fieldname": "date_of_birth",
 			"label": "Date of Birth",
 			"fieldtype": "Date",
-			"insert_after": "custom_column_break_1ke4q",
+			"insert_after": "cova_column_break_1",
 			"allow_on_submit": 1,
 		},
 		{
-			"fieldname": "custom_gender",
+			"fieldname": "gender",
 			"label": "Gender",
 			# Link to the Gender doctype, matching Employee.gender, rather than a
 			# hardcoded Male/Female list.
 			"fieldtype": "Link",
 			"options": "Gender",
-			"insert_after": "custom_date_of_birth",
+			"insert_after": "date_of_birth",
 			"allow_on_submit": 1,
 		},
 		{
-			"fieldname": "custom_column_break_cova2",
+			"fieldname": "cova_column_break_2",
 			"fieldtype": "Column Break",
-			"insert_after": "custom_gender",
+			"insert_after": "gender",
 		},
 		{
-			"fieldname": "custom_cova_registered",
+			"fieldname": "cova_registered",
 			"label": "Cova Registered?",
 			"fieldtype": "Check",
-			"insert_after": "custom_column_break_cova2",
+			"insert_after": "cova_column_break_2",
 			"allow_on_submit": 1,
 			"no_copy": 1,
 			"read_only": 1,
 		},
 		{
-			"fieldname": "custom_column_break_cova3",
+			"fieldname": "cova_column_break_3",
 			"fieldtype": "Column Break",
-			"insert_after": "custom_cova_registered",
+			"insert_after": "cova_registered",
 		},
 		# Tested? leads the last column so it is never blank: sites with
 		# hide_empty_read_only_fields on suppress the empty Link below it, and a
 		# column holding only that field would render as dead space.
 		{
-			"fieldname": "custom_cova_tested",
+			"fieldname": "cova_tested",
 			"label": "Cova Tested?",
 			"fieldtype": "Check",
-			"insert_after": "custom_column_break_cova3",
+			"insert_after": "cova_column_break_3",
 			"allow_on_submit": 1,
 			"no_copy": 1,
 			"read_only": 1,
 		},
 		{
-			"fieldname": "custom_linked_test_result",
+			"fieldname": "linked_test_result",
 			"label": "Linked Test Result",
 			"fieldtype": "Link",
 			"options": "Clinic Test Result",
-			"insert_after": "custom_cova_tested",
+			"insert_after": "cova_tested",
 			"allow_on_submit": 1,
 			"no_copy": 1,
 			"read_only": 1,
@@ -241,10 +248,11 @@ def install_clinic_fields():
 # The app's own doctypes carry their connections in their JSON. Employee is
 # standard, so its DocType Link rows are installed the same way its fields are.
 #
-# Clinic Checkin appears twice on purpose: the sick-off records hang off
-# `employee` and the biometric punches off `b_employee`. DocType Link has no
-# label override, so they are put in separate groups — otherwise the Connections
-# tab would show two identical "Clinic Checkin" entries.
+# Clinic Checkin appears once. It used to appear twice, one entry per employee
+# field, back when punches and sick-offs named their person in different
+# columns. Both use `employee` now, so a second entry is simply a duplicate row
+# in the Connections tab — DocType Link has no label override, so two entries
+# for the same doctype and field are indistinguishable.
 CLINIC_CONNECTIONS = {
 	"Employee": [
 		{"group": "Cova Clinic", "link_doctype": "Cova Members", "link_fieldname": "employee"},
@@ -252,7 +260,6 @@ CLINIC_CONNECTIONS = {
 		{"group": "Cova Clinic", "link_doctype": "Clinic Test Request", "link_fieldname": "employee"},
 		{"group": "Cova Clinic", "link_doctype": "Clinic Test Result", "link_fieldname": "employee"},
 		{"group": "Clinic Attendance", "link_doctype": "Clinic Checkin", "link_fieldname": "employee"},
-		{"group": "Clinic Visits", "link_doctype": "Clinic Checkin", "link_fieldname": "b_employee"},
 	],
 }
 
@@ -326,10 +333,65 @@ def uninstall_clinic_links():
 # ─── install / uninstall entry points ─────────────────────────────────────
 
 
+def repair_naming_series():
+	"""Pull each ``PREFIX.-.####`` counter up to the highest name already issued.
+
+	A counter that has fallen behind is fatal, not cosmetic: getseries() starts a
+	missing row at 1, the generated name collides with an existing record, the
+	insert dies with a duplicate-key error — and because that rolls the failed
+	transaction back, the counter row goes with it and the next attempt starts at
+	1 all over again. Every insert for that doctype fails, permanently, until
+	somebody notices. It happens whenever rows arrive without their counter: a
+	partial restore, a table copied between sites, a hand-deleted Series row.
+
+	Only ever moves a counter forward, so it can prevent a collision but never
+	cause one.
+	"""
+	repaired = []
+	for doctype, prefix in (
+		("Clinic Test Request", "TR-"),
+		("Clinic Test Result", "CTR-"),
+		("Health Monthly Report", "HMR-"),
+	):
+		if not frappe.db.table_exists(doctype):
+			continue
+
+		highest = 0
+		for (name,) in frappe.db.sql(
+			f"SELECT name FROM `tab{doctype}` WHERE name LIKE %s", (prefix + "%",)
+		):
+			tail = str(name)[len(prefix) :]
+			if tail.isdigit():
+				highest = max(highest, int(tail))
+
+		if not highest:
+			continue
+
+		current = frappe.db.sql("SELECT `current` FROM tabSeries WHERE name = %s", prefix)
+		current = current[0][0] if current else None
+		if current is not None and int(current) >= highest:
+			continue
+
+		frappe.db.sql(
+			"INSERT INTO tabSeries (name, current) VALUES (%s, %s) "
+			"ON DUPLICATE KEY UPDATE current = GREATEST(current, %s)",
+			(prefix, highest, highest),
+		)
+		repaired.append(f"{prefix} {current} -> {highest}")
+
+	if repaired:
+		frappe.db.commit()
+		frappe.log_error(
+			title="COVA naming series repaired",
+			message="Counters were behind the names already issued: " + ", ".join(repaired),
+		)
+
+
 def after_install():
 	"""Single entry point so hooks name one thing per lifecycle event."""
 	install_clinic_fields()
 	install_clinic_links()
+	repair_naming_series()
 
 
 def before_uninstall():
@@ -467,7 +529,7 @@ def extend_bootinfo(bootinfo):
 
 # ─── Job Offer ────────────────────────────────────────────────────────────
 
-REQUIRED_FIELDS = ("custom_national_id", "custom_phone_number")
+REQUIRED_FIELDS = ("national_id", "phone_number")
 
 
 def job_offer_validate(doc, method=None):

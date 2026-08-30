@@ -7,8 +7,8 @@
 // The page shell is creamy white / white / black; colour is reserved for the
 // charts, where it does encoding work:
 //   * categorical  — one fixed hue order, assigned by slot and never cycled;
-//     multi-series lines keep dash + marker shape as a secondary channel so
-//     identity never rests on hue alone;
+//     multi-series lines carry a distinct marker shape as a secondary channel
+//     so identity never rests on hue alone;
 //   * sequential   — one blue hue, light -> dark, for magnitude (heat cells);
 //   * status       — the reserved good/warning/serious/critical steps, used
 //     only for clinical outcomes, always beside a visible label.
@@ -54,9 +54,9 @@
     UnfitForWork: STATUS.critical
   };
 
-  var DASHES = [[], [7, 3], [2, 3], [9, 3, 2, 3], [1, 3]];
-  // Filled shapes only: Chart.js draws 'star'/'cross' as thin strokes, which
-  // all but vanish in the legend at a light series colour.
+  // Every line is solid; marker shape is the only secondary channel. Filled
+  // shapes only: Chart.js draws 'star'/'cross' as thin strokes, which all but
+  // vanish in the legend at a light series colour.
   var POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot', 'rectRounded'];
 
   var CHECKIN_URL = '/api/method/cova_clinic_integration.api.clinic_checkin_report';
@@ -66,6 +66,17 @@
 
   var charts = [];
   var current = 'health';
+
+  // Global filters that persist across all views
+  var GLOBAL_FILTERS = [
+    { key: 'year', label: 'Year', type: 'select', src: 'years', all: 'All Years' },
+    { key: 'month', label: 'Month', type: 'select', src: 'months', all: 'All' },
+    { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date' },
+    { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date' }
+  ];
+  var globalValues = {};
+  var globalLabels = {};
+  var globalFilterOptions = {};
 
   // ── small helpers ─────────────────────────────────────────────────
 
@@ -119,6 +130,21 @@
     return Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
   }
 
+  // The currency the costs are in, as the server reports it for the configured
+  // company. Amounts that stand on their own carry it; the month grid and the
+  // line-item lists name it once in their heading instead, because repeating it
+  // down thirteen columns costs width and buys nothing.
+  var CURRENCY = '';
+
+  function cash(v) {
+    return CURRENCY ? CURRENCY + ' ' + money(v) : money(v);
+  }
+
+  // For a heading that labels a whole block of bare amounts.
+  function inCurrency(label) {
+    return CURRENCY ? label + ' (' + CURRENCY + ')' : label;
+  }
+
   // Sequential ramp for table heat cells: one hue, binned light -> dark, so
   // every cell lands on a documented step rather than an arbitrary blend.
   function heatStep(v, max) {
@@ -143,6 +169,8 @@
   var DAY_NAMES = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
   var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
                      'July', 'August', 'September', 'October', 'November', 'December'];
+  // Mirrors MONTH_LABELS in api.py — the labels every grid column is keyed by.
+  var MONTH_LABELS = MONTH_NAMES.map(function (m) { return m.slice(0, 3).toUpperCase(); });
   var openCal = null;
 
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
@@ -355,10 +383,19 @@
 
   // ── block builders ────────────────────────────────────────────────
 
+  // A tile carrying `drill` becomes a button that opens the panel listing the
+  // records behind its number. A tile showing zero is left inert — there is
+  // nothing to look at, and a click that opens an empty panel reads as a fault.
   function kpiBlock(tiles) {
     var h = '<div class="cdd-kpis">';
     tiles.forEach(function (t) {
-      h += '<div class="cdd-kpi"><div class="v">' + esc(t.v) + '</div>' +
+      // `drill` may legitimately be '' (meaning "everything"), so test for the
+      // key's presence rather than its truthiness.
+      var live = t.drill !== undefined && Number(t.v) > 0;
+      h += '<div class="cdd-kpi' + (live ? ' cdd-kpi-drill' : '') + '"' +
+           (live ? ' data-drill="' + esc(t.drill) + '" data-drill-label="' + esc(t.l) + '"' +
+                   ' role="button" tabindex="0" title="Show the people behind this"' : '') +
+           '><div class="v">' + esc(t.v) + '</div>' +
            '<div class="l">' + esc(t.l) + '</div>' +
            (t.s ? '<div class="s">' + esc(t.s) + '</div>' : '') +
            '</div>';
@@ -378,7 +415,21 @@
     opts = opts || {};
     var h = title ? '<div class="cdd-section-title">' + esc(title) + '</div>' : '';
     h += '<div class="cdd-table-wrap"><table><thead><tr>';
-    head.forEach(function (c) { h += '<th>' + esc(c) + '</th>'; });
+    head.forEach(function (c) {
+      // A plain string is a static column. An object marks the column sortable:
+      // the caller reads data-sort back on click and re-renders.
+      if (c && typeof c === 'object') {
+        h += '<th class="cdd-sort' + (c.active ? ' is-active' : '') + '"' +
+             ' data-sort="' + esc(c.key) + '" role="button" tabindex="0"' +
+             ' aria-sort="' + (c.active ? (c.dir > 0 ? 'ascending' : 'descending') : 'none') + '">' +
+             esc(c.label) +
+             '<span class="cdd-caret" aria-hidden="true">' +
+             (c.active ? (c.dir > 0 ? '▲' : '▼') : '⇅') +
+             '</span></th>';
+      } else {
+        h += '<th>' + esc(c) + '</th>';
+      }
+    });
     h += '</tr></thead><tbody>';
     if (!bodyRows.length) {
       h += '<tr><td colspan="' + head.length + '"><div class="cdd-empty">' +
@@ -395,6 +446,132 @@
     var h = '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td class="cond">' + esc(label) + '</td>';
     cells.forEach(function (c) { h += '<td>' + (c === '' ? '' : esc(c)) + '</td>'; });
     return h + '</tr>';
+  }
+
+  // A row that opens the breakdown panel for its employee. `noCheckin` marks
+  // the rows whose panel should show only the visits missing a checkin, so the
+  // detail matches the figure that was clicked.
+  function empRow(r, cells, noCheckin) {
+    var name = r.employee_name || r.employee;
+    var h = '<tr class="cdd-emp-row" data-emp-id="' + esc(r.employee) + '"' +
+            ' data-emp-name="' + esc(name) + '"' +
+            (noCheckin ? ' data-no-checkin="1"' : '') +
+            ' title="View visit breakdown">' +
+            '<td class="cond">' + esc(name) + '</td>';
+    cells.forEach(function (c) { h += '<td>' + esc(c) + '</td>'; });
+    return h + '</tr>';
+  }
+
+  // The spend grid — employee x month, heat-shaded, every filled cell a click
+  // target for the breakdown panel. Built here rather than inline in the visits
+  // renderer because the year-only refetch swaps this one block back in, and it
+  // must produce byte-identical markup when it does.
+  var EMPCOST_GRID_ID = 'cdd-empcost-grid';
+
+  // Sort state for the grid, kept outside the render so it survives the
+  // year-only refetch swapping the block out. key is 'name', 'total', or a
+  // month's column index; dir is 1 ascending / -1 descending. A null key means
+  // the server's own order (heaviest spender first), which is the default.
+  var gridSort = { key: null, dir: -1 };
+  var gridData = null;
+
+  function sortGridRows(rows, months) {
+    if (gridSort.key === null) { return rows; }
+    var key = gridSort.key;
+    var dir = gridSort.dir;
+
+    return rows.slice().sort(function (a, b) {
+      if (key === 'name') {
+        var an = (a.employee_name || a.employee || '').toLowerCase();
+        var bn = (b.employee_name || b.employee || '').toLowerCase();
+        return (an < bn ? -1 : an > bn ? 1 : 0) * dir;
+      }
+      var av = key === 'total' ? a.total : (a.cells || [])[Number(key)];
+      var bv = key === 'total' ? b.total : (b.cells || [])[Number(key)];
+      // A blank month is an absence of spend, so it sorts as zero either way.
+      return ((av || 0) - (bv || 0)) * dir;
+    });
+  }
+
+  function empCostGrid(grid) {
+    grid = grid || { months: [], rows: [], col_totals: [] };
+    gridData = grid;
+
+    var maxCell = 0;
+    (grid.rows || []).forEach(function (r) {
+      r.cells.forEach(function (c) { if (c > maxCell) { maxCell = c; } });
+    });
+
+    var body = sortGridRows(grid.rows || [], grid.months).map(function (r) {
+      var h = '<tr><td class="cond">' + esc(r.employee_name || r.employee) + '</td>';
+      r.cells.forEach(function (c, colIdx) {
+        h += '<td class="heat cdd-cost-cell"' +
+             ' data-emp-id="' + esc(r.employee) + '"' +
+             ' data-emp-name="' + esc(r.employee_name || r.employee) + '"' +
+             ' data-month="' + esc(grid.months[colIdx] || '') + '"' +
+             ' style="background:' + heatBg(c, maxCell) + ';color:' + heatFg(c, maxCell) +
+             ';cursor:' + (c ? 'pointer' : 'default') + '">' + (c ? money(c) : '') + '</td>';
+      });
+      return h + '<td><b>' + money(r.total) + '</b></td></tr>';
+    });
+
+    if (body.length) {
+      body.push(row('TOTAL',
+        (grid.col_totals || []).map(money).concat([money(grid.grand_total)]), 'total-row'));
+    }
+
+    // Every column sorts; the active one carries the arrow.
+    var head = [{ key: 'name', label: 'Employee' }]
+      .concat((grid.months || []).map(function (m, i) {
+        return { key: String(i), label: m };
+      }))
+      .concat([{ key: 'total', label: 'Total' }]);
+
+    head.forEach(function (c) {
+      c.active = gridSort.key === c.key;
+      c.dir = gridSort.dir;
+    });
+
+    return tableBlock(inCurrency('Total Cost per Employee over Time'), head, body,
+      { empty: 'No visits for the selected period' });
+  }
+
+  // Re-renders the grid in place on a header click. Horizontal scroll is
+  // restored afterwards — with thirteen columns, snapping back to January on
+  // every sort would be worse than not sorting at all.
+  function wireGridSort() {
+    var host = el(EMPCOST_GRID_ID);
+    if (!host) { return; }
+
+    Array.prototype.forEach.call(host.querySelectorAll('th.cdd-sort'), function (th) {
+      function apply() {
+        var key = th.getAttribute('data-sort');
+        if (gridSort.key === key) {
+          gridSort.dir = -gridSort.dir;
+        } else {
+          gridSort.key = key;
+          // Names read best A-Z; money reads best heaviest-first.
+          gridSort.dir = key === 'name' ? 1 : -1;
+        }
+
+        var wrap = host.querySelector('.cdd-table-wrap');
+        var left = wrap ? wrap.scrollLeft : 0;
+        var top = wrap ? wrap.scrollTop : 0;
+
+        host.innerHTML = empCostGrid(gridData);
+
+        var moved = host.querySelector('.cdd-table-wrap');
+        if (moved) { moved.scrollLeft = left; moved.scrollTop = top; }
+
+        wireCostCells();
+        wireGridSort();
+      }
+
+      th.addEventListener('click', apply);
+      th.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); }
+      });
+    });
   }
 
   function barChart(canvasId, cfg) {
@@ -477,7 +654,6 @@
         data: s.values,
         borderColor: stroke,
         backgroundColor: stroke,
-        borderDash: DASHES[i % DASHES.length],
         pointStyle: POINT_STYLES[i % POINT_STYLES.length],
         fill: false,
         tension: 0.35,
@@ -530,10 +706,6 @@
       title: 'Disease & Health Monthly Report',
       url: '/api/method/clinic_disease_report',
       filters: [
-        { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date', default: 'today' },
-        { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date', default: 'today' },
-        { key: 'year', label: 'Year', src: 'years', all: 'All Years' },
-        { key: 'month', label: 'Month', src: 'months', all: 'All' },
         { key: 'posting_date', label: 'Posting Date', src: 'posting_dates', all: 'All' },
         { key: 'medical_case', label: 'Medical Case', src: 'medical_cases', all: 'All' }
       ],
@@ -601,13 +773,10 @@
 
     biometric: {
       title: 'Clinic Visits — Biometric',
-      subtitle: 'Footfall from the biometric punch log (b_employee / log type / time)',
+      subtitle: 'Footfall from the biometric punch log (log type / time)',
       url: CHECKIN_URL,
       pick: function (res) { return res.biometric || {}; },
-      filters: [
-        { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date', default: 'today' },
-        { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date', default: 'today' }
-      ],
+      filters: [],
       render: function (d) {
         var k = d.kpis || {};
         var body = (d.top_employees || []).map(function (r) {
@@ -673,12 +842,7 @@
       title: 'Sick-Off & Leave',
       url: CHECKIN_URL,
       pick: function (res) { return res.sick_off || {}; },
-      filters: [
-        { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date', default: 'today' },
-        { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date', default: 'today' },
-        { key: 'year', label: 'Year', src: 'years', all: 'All Years' },
-        { key: 'month', label: 'Month', src: 'months', all: 'All' }
-      ],
+      filters: [],
       render: function (d) {
         var k = d.kpis || {};
         var body = (d.top_employees || []).map(function (r) {
@@ -727,10 +891,6 @@
       subtitle: 'What visits cost and what benefit cover is left',
       url: VISIT_URL,
       filters: [
-        { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date', default: 'today' },
-        { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date', default: 'today' },
-        { key: 'year', label: 'Year', src: 'years', all: 'All Years' },
-        { key: 'month', label: 'Month', src: 'months', all: 'All' },
         { key: 'employee', label: 'Employee', type: 'link', src: 'employees',
           all: 'All employees' }
       ],
@@ -744,66 +904,55 @@
           var w = maxCost ? Math.max(4, (p.cost / maxCost) * 48) : 0;
           return '<tr><td class="cond">' + esc(p.purpose) + '</td>' +
                  '<td>' + p.items + '</td>' +
-                 '<td><b>' + money(p.cost) + '</b></td>' +
+                 '<td><b>' + cash(p.cost) + '</b></td>' +
                  '<td><span class="pct-bar" style="width:' + w + 'px;"></span>' + p.percent + '%</td></tr>';
         });
 
+        // Same click target as a grid cell, minus the month: the panel then
+        // covers whatever period the filters currently describe.
+        var empCells = function (r) {
+          return [r.payroll_number || '', r.visits, cash(r.cost), r.last_visit || ''];
+        };
         var empBody = (d.top_employees || []).map(function (r) {
-          return row(r.employee_name || r.employee,
-            [r.payroll_number || '', r.visits, money(r.cost), r.last_visit || '']);
+          return empRow(r, empCells(r));
+        });
+        var noCheckinBody = (d.no_checkin_costs || []).map(function (r) {
+          return empRow(r, empCells(r), true);
         });
 
-        // Cost per employee per month, as a heat grid so the heavy months stand out.
-        var grid = d.cost_by_employee || { months: [], rows: [], col_totals: [] };
-        var maxCell = 0;
-        (grid.rows || []).forEach(function (r) {
-          r.cells.forEach(function (c) { if (c > maxCell) { maxCell = c; } });
-        });
-        var gridBody = (grid.rows || []).map(function (r) {
-          var h = '<tr><td class="cond">' + esc(r.employee_name || r.employee) + '</td>';
-          r.cells.forEach(function (c) {
-            h += '<td class="heat" style="background:' + heatBg(c, maxCell) +
-                 ';color:' + heatFg(c, maxCell) + '">' + (c ? money(c) : '') + '</td>';
-          });
-          return h + '<td><b>' + money(r.total) + '</b></td></tr>';
-        });
-        if (gridBody.length) {
-          gridBody.push(row('TOTAL',
-            (grid.col_totals || []).map(money).concat([money(grid.grand_total)]), 'total-row'));
-        }
+        // Cost per employee per month. This block is year-scoped on purpose —
+        // the month and date filters narrow every other block but not this one,
+        // so load() refetches it with the year alone and swaps it in below.
+        var grid = d.cost_by_employee_full_year || d.cost_by_employee;
 
         var asAt = k.balance_month ? 'as at ' + k.balance_month : '';
         var balanceTiles = (d.balances_latest || []).map(function (b) {
-          return { v: money(b.value), l: b.label, s: asAt };
+          return { v: cash(b.value), l: b.label, s: asAt };
         });
-
-        var balanceNote = k.balance_month
-          ? '<div class="cdd-note">Benefit figures are the cover <b>remaining</b> after each visit, so the ' +
-            'trend follows the last visit of every month and holds flat when nobody visits.</div>'
-          : '';
 
         return kpiBlock([
           { v: num(k.visits), l: 'Visits' },
           { v: num(k.employees), l: 'Employees Seen' },
-          { v: money(k.cost), l: 'Total Cost' },
-          { v: money(k.avg_cost), l: 'Avg Cost / Visit' },
-          { v: money(k.cost_per_employee), l: 'Cost / Employee' },
-          { v: money(k.balance_total), l: 'Benefit Left — All', s: asAt }
+          { v: cash(k.cost), l: 'Total Cost' },
+          { v: cash(k.avg_cost), l: 'Avg Cost / Visit' },
+          { v: cash(k.cost_per_employee), l: 'Cost / Employee' },
+          { v: cash(k.balance_total), l: 'Benefit Left — All', s: asAt }
         ]) +
           (balanceTiles.length
             ? '<div class="cdd-section-title">Benefit Balances</div>' + kpiBlock(balanceTiles)
             : '') +
           chartRow(['c-vs-month', 'c-vs-purpose']) +
-          chartRow(['c-vs-balance'], true) + balanceNote +
+          chartRow(['c-vs-balance'], true) +
           chartRow(['c-vs-empcost'], true) +
-          tableBlock('Total Cost per Employee over Time',
-            ['Employee'].concat(grid.months || []).concat(['Total']), gridBody,
-            { empty: 'No visits for the selected period' }) +
+          '<div id="' + EMPCOST_GRID_ID + '">' + empCostGrid(grid) + '</div>' +
           tableBlock('Spend by Purpose', ['Purpose', 'Line Items', 'Cost', 'Share'], purposeBody,
             { empty: 'No visit line items for the selected period' }) +
           tableBlock('Costliest Employees',
             ['Employee', 'Payroll No.', 'Visits', 'Cost', 'Last Visit'], empBody,
-            { empty: 'No visits for the selected period' });
+            { empty: 'No visits for the selected period' }) +
+          tableBlock('Employees With Cost but No Checkin on That Date',
+            ['Employee', 'Payroll No.', 'Visits', 'Cost', 'Last Visit'], noCheckinBody,
+            { empty: 'Every cost has a clinic checkin on its visit date' });
       },
       draw: function (d) {
         var m = d.by_month || { months: [], visits: [], cost: [] };
@@ -814,7 +963,7 @@
           labels: m.months, series: [{ label: 'Visits', values: m.visits }]
         });
         barChart('c-vs-purpose', {
-          title: 'Spend by Purpose',
+          title: inCurrency('Spend by Purpose'),
           labels: (d.by_purpose || []).map(function (p) { return p.purpose; }),
           values: (d.by_purpose || []).map(function (p) { return p.cost; }),
           color: slot(1),
@@ -822,7 +971,7 @@
         });
         var b = d.balances || { months: [], series: [] };
         lineChart('c-vs-balance', {
-          title: 'Benefit Balance Remaining by Month',
+          title: inCurrency('Benefit Balance Remaining by Month'),
           labels: b.months, series: b.series
         });
 
@@ -832,9 +981,9 @@
         var top = (grid.rows || []).slice(0, 5);
         if (top.length) {
           lineChart('c-vs-empcost', {
-            title: 'Cost per Employee over Time' +
+            title: inCurrency('Cost per Employee over Time') +
                    ((grid.rows || []).length > top.length
-                     ? ' (top ' + top.length + ' of ' + grid.rows.length + ')' : ''),
+                     ? ' — top ' + top.length + ' of ' + grid.rows.length : ''),
             labels: grid.months,
             series: top.map(function (r) {
               return { label: r.employee_name || r.employee, values: r.cells };
@@ -865,10 +1014,6 @@
       title: 'Test Requests',
       url: REQUEST_URL,
       filters: [
-        { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date', default: 'today' },
-        { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date', default: 'today' },
-        { key: 'year', label: 'Year', src: 'years', all: 'All Years' },
-        { key: 'month', label: 'Month', src: 'months', all: 'All' },
         { key: 'status', label: 'Status', src: 'statuses', all: 'All' },
         { key: 'test_package', label: 'Test Package', src: 'test_packages', all: 'All' },
         { key: 'member_type', label: 'Member Type', src: 'member_types', all: 'All' }
@@ -935,10 +1080,6 @@
       title: 'Test Results',
       url: RESULT_URL,
       filters: [
-        { key: 'from_date', label: 'From', type: 'date', notAfter: 'to_date', default: 'today' },
-        { key: 'to_date', label: 'To', type: 'date', notBefore: 'from_date', default: 'today' },
-        { key: 'year', label: 'Year', src: 'years', all: 'All Years' },
-        { key: 'month', label: 'Month', src: 'months', all: 'All' },
         { key: 'test_package', label: 'Test Package', src: 'test_packages', all: 'All' },
         { key: 'clinical_outcome', label: 'Outcome', src: 'clinical_outcomes', all: 'All' },
         { key: 'member_type', label: 'Member Type', src: 'member_types', all: 'All' }
@@ -968,13 +1109,16 @@
           return row(p.test_package, [p.cnt]);
         });
 
+        // drill values are what the endpoint filters on: a clinical outcome,
+        // "employees" for the distinct-employee tile, or "" for every result.
         return kpiBlock([
-          { v: num(k.total), l: 'Results Received' },
-          { v: num(k.employees), l: 'Employees' },
-          { v: num(k.fit), l: 'Fit for Work', s: num(k.fit_rate) + '% of results' },
-          { v: num(k.restricted), l: 'Fit with Restrictions' },
-          { v: num(k.unfit), l: 'Unfit for Work' },
-          { v: num(k.retest), l: 'Retest Required' }
+          { v: num(k.total), l: 'Results Received', drill: '' },
+          { v: num(k.employees), l: 'Employees', drill: 'employees' },
+          { v: num(k.fit), l: 'Fit for Work', s: num(k.fit_rate) + '% of results',
+            drill: 'FitForWork' },
+          { v: num(k.restricted), l: 'Fit with Restrictions', drill: 'FitWithRestrictions' },
+          { v: num(k.unfit), l: 'Unfit for Work', drill: 'UnfitForWork' },
+          { v: num(k.retest), l: 'Retest Required', drill: 'InconclusiveRetestRequired' }
         ]) +
           chartRow(['c-rs-outcome', 'c-rs-month']) +
           tableBlock('Condition by Risk Grade',
@@ -1016,6 +1160,13 @@
   function filterValues(view) {
     var v = VIEWS[view];
     var body = {};
+
+    // Add global filter values
+    GLOBAL_FILTERS.forEach(function (f) {
+      if (globalValues[f.key]) { body[f.key] = globalValues[f.key]; }
+    });
+
+    // Add view-specific filter values
     v.filters.forEach(function (f) {
       var sel = el('f-' + f.key);
       if (!sel) { return; }
@@ -1031,8 +1182,19 @@
     var wrap = el('cdd-filters');
     var h = '';
 
-    // First build only: seed the declared defaults. Clear Filters sets
-    // v.values to {} (defined but empty), so cleared filters stay cleared.
+    // Build global filters only once, but merge options on each load
+    if (!Object.keys(globalFilterOptions).length) {
+      globalFilterOptions = options || {};
+      // Seed global filter defaults
+      GLOBAL_FILTERS.forEach(function (f) {
+        if (f.key === 'year') { globalValues[f.key] = String(new Date().getFullYear()); }
+      });
+    } else {
+      // Merge view-specific options (like employees for visits view)
+      globalFilterOptions = Object.assign({}, globalFilterOptions, options || {});
+    }
+
+    // Build view-specific filter defaults and store options
     if (!v.values) {
       v.values = {};
       v.filters.forEach(function (f) {
@@ -1040,13 +1202,37 @@
       });
       v.seededDefaults = Object.keys(v.values).length > 0;
     }
-    v.filters.forEach(function (f) {
-      h += '<div class="cdd-field"><label>' + esc(f.label) + '</label>';
+    // Store view-specific filter options
+    v.filterOptions = options || {};
+    // Render global filters
+    var globalFilterHtml = '';
+    GLOBAL_FILTERS.forEach(function (f) {
+      globalFilterHtml += '<div class="cdd-field"><label>' + esc(f.label) + '</label>';
       if (f.type === 'date') {
-        // Read-only text input plus a popup calendar (see openCalendar). The
-        // browser's own date control is not used: it renders locale-dependent
-        // mm/dd/yyyy chrome that cannot be themed to match the page.
-        h += '<div class="cdd-datefield">' +
+        globalFilterHtml += '<div class="cdd-datefield">' +
+             '<input type="text" id="f-' + f.key + '" class="cdd-dateinput cdd-global-filter" readonly ' +
+             'autocomplete="off" placeholder="Select date">' +
+             '<span class="cdd-datefield-icon" aria-hidden="true">' +
+             '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
+             'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+             '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>' +
+             '</svg></span></div>';
+      } else {
+        globalFilterHtml += '<select id="f-' + f.key + '" class="cdd-global-filter"><option value="">' + esc(f.all) + '</option>';
+        ((globalFilterOptions || {})[f.src] || []).forEach(function (o) {
+          globalFilterHtml += '<option value="' + esc(o) + '">' + esc(o) + '</option>';
+        });
+        globalFilterHtml += '</select>';
+      }
+      globalFilterHtml += '</div>';
+    });
+
+    // Render view-specific filters
+    var viewFilterHtml = '';
+    v.filters.forEach(function (f) {
+      viewFilterHtml += '<div class="cdd-field"><label>' + esc(f.label) + '</label>';
+      if (f.type === 'date') {
+        viewFilterHtml += '<div class="cdd-datefield">' +
              '<input type="text" id="f-' + f.key + '" class="cdd-dateinput" readonly ' +
              'autocomplete="off" placeholder="Select date">' +
              '<span class="cdd-datefield-icon" aria-hidden="true">' +
@@ -1055,30 +1241,78 @@
              '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>' +
              '</svg></span></div>';
       } else if (f.type === 'link') {
-        // Typeahead over a fetched option list. The visible text is the
-        // employee's name; the id the API wants rides on dataset.value.
-        h += '<div class="cdd-linkfield">' +
+        viewFilterHtml += '<div class="cdd-linkfield">' +
              '<input type="text" id="f-' + f.key + '" class="cdd-linkinput" ' +
              'autocomplete="off" placeholder="' + esc(f.all) + '">' +
              '<button type="button" class="cdd-linkclear" aria-label="Clear">&times;</button>' +
              '</div>';
       } else {
-        h += '<select id="f-' + f.key + '"><option value="">' + esc(f.all) + '</option>';
-        ((options || {})[f.src] || []).forEach(function (o) {
-          h += '<option value="' + esc(o) + '">' + esc(o) + '</option>';
+        viewFilterHtml += '<select id="f-' + f.key + '"><option value="">' + esc(f.all) + '</option>';
+        ((globalFilterOptions || {})[f.src] || []).forEach(function (o) {
+          viewFilterHtml += '<option value="' + esc(o) + '">' + esc(o) + '</option>';
         });
-        h += '</select>';
+        viewFilterHtml += '</select>';
       }
-      h += '</div>';
+      viewFilterHtml += '</div>';
     });
-    h += '<button class="cdd-clear" id="cdd-clear">Clear Filters</button>';
+
+    h = globalFilterHtml + viewFilterHtml + '<button class="cdd-clear" id="cdd-clear">Clear Filters</button>';
     wrap.innerHTML = h;
 
+    // Smart date-month sync: if month is set, auto-fill from/to dates; if dates
+    // are manually set, clear the month filter.
+    function syncDateMonth() {
+      var yearSel = el('f-year');
+      var monthSel = el('f-month');
+      var fromSel = el('f-from_date');
+      var toSel = el('f-to_date');
+
+      if (!yearSel || !monthSel || !fromSel || !toSel) { return; }
+
+      var year = yearSel.value;
+      var month = monthSel.value;
+      var fromVal = fromSel.value;
+      var toVal = toSel.value;
+
+      // If month is selected, auto-fill from/to dates for that month
+      if (month && year) {
+        var monthNum = new Date(month + ' 1').getMonth();
+        var yearNum = parseInt(year);
+        var firstDay = new Date(yearNum, monthNum, 1);
+        var lastDay = new Date(yearNum, monthNum + 1, 0);
+        fromSel.value = toIso(firstDay);
+        toSel.value = toIso(lastDay);
+        globalValues['from_date'] = toIso(firstDay);
+        globalValues['to_date'] = toIso(lastDay);
+      }
+      // If from/to dates are manually set, clear the month filter
+      else if (fromVal || toVal) {
+        monthSel.value = '';
+        globalValues['month'] = '';
+      }
+    }
+
+    // Bind global filter listeners
+    GLOBAL_FILTERS.forEach(function (f) {
+      var sel = el('f-' + f.key);
+      if (!sel) { return; }
+      // Restore previous global filter values
+      if (globalValues[f.key]) {
+        sel.value = globalValues[f.key];
+      }
+      if (f.type === 'date') { attachCalendar(sel, view, f); }
+      sel.addEventListener('change', function () {
+        globalValues[f.key] = sel.value;
+        syncDateMonth();
+        load(view);
+      });
+    });
+
+    // Bind view-specific filter listeners
     v.filters.forEach(function (f) {
       var sel = el('f-' + f.key);
       if (!sel) { return; }
-      // buildFilters re-renders the bar, so restore what was selected before.
-      // Link fields show a label but submit an id, so both are restored.
+      // Restore previous view-specific filter values
       if (v.values && v.values[f.key]) {
         if (f.type === 'link') {
           sel.dataset.value = v.values[f.key];
@@ -1088,7 +1322,10 @@
         }
       }
       if (f.type === 'date') { attachCalendar(sel, view, f); }
-      if (f.type === 'link') { attachLink(sel, view, f, (options || {})[f.src] || []); }
+      if (f.type === 'link') {
+        var linkOptions = (v.filterOptions || {})[f.src] || (globalFilterOptions || {})[f.src] || [];
+        attachLink(sel, view, f, linkOptions);
+      }
       sel.addEventListener('change', function () {
         v.values = v.values || {};
         v.values[f.key] = sel.value;
@@ -1096,6 +1333,20 @@
       });
     });
     el('cdd-clear').addEventListener('click', function () {
+      // Clear global filters (except year)
+      globalValues = { year: String(new Date().getFullYear()) };
+      globalLabels = {};
+      GLOBAL_FILTERS.forEach(function (f) {
+        var sel = el('f-' + f.key);
+        if (!sel) { return; }
+        if (f.key === 'year') {
+          sel.value = String(new Date().getFullYear());
+        } else {
+          sel.value = '';
+        }
+      });
+
+      // Clear view-specific filters
       v.values = {};
       v.labels = {};
       v.filters.forEach(function (f) {
@@ -1126,6 +1377,7 @@
       if (current !== view) { return; }   // the user switched away mid-flight
       v.raw = res;
       v.data = v.pick ? v.pick(res) : res;
+      if (res.currency) { CURRENCY = res.currency; }
 
       // First response also carries the filter option lists. Rebuild the bar,
       // preselect the most recent year, and re-fetch once with it.
@@ -1145,6 +1397,29 @@
       destroyCharts();
       el('cdd-view').innerHTML = v.render(v.data);
       describe(view);
+
+      // The spend grid ignores the month and date filters by design, so it is
+      // fetched again with the year alone and swapped into its own container —
+      // only that block, or the KPIs and charts around it go with it.
+      if (current === 'visits' && v.data.cost_by_employee) {
+        post(VISIT_URL, { year: globalValues.year }).then(function (full) {
+          if (current !== view || !full || !full.cost_by_employee) { return; }
+          v.data.cost_by_employee_full_year = full.cost_by_employee;
+          var host = el(EMPCOST_GRID_ID);
+          if (host) {
+            host.innerHTML = empCostGrid(full.cost_by_employee);
+            wireCostCells();
+            wireGridSort();
+          }
+        }).catch(function (err) {
+          console.error('Could not load full-year grid:', err);
+        });
+      }
+
+      wireCostCells();
+      wireGridSort();
+      wireKpiDrill();
+
       el('cdd-loading').style.display = 'none';
       ensureChartJs(function () {
         if (current === view) { v.draw(v.data); }
@@ -1207,6 +1482,258 @@
     form.submit();
     document.body.removeChild(form);
   }
+
+  // ── employee modal ────────────────────────────────────────────────
+  var empModal = el('cdd-emp-modal');
+  var empModalBody = el('cdd-emp-modal-body');
+  var empModalTitle = el('cdd-emp-modal-title');
+  var empModalClose = el('cdd-emp-modal-close');
+
+  function closeEmpModal() {
+    empModal.classList.remove('is-open');
+  }
+
+  // Both breakdown entry points: a filled cell in the spend grid (scoped to
+  // that one month) and a row of Costliest Employees (scoped to whatever the
+  // filters currently describe). Called again after either table is re-rendered,
+  // since that drops the listeners along with the old nodes.
+  function wireCostCells() {
+    var host = el('cdd-view');
+    if (!host) { return; }
+
+    function openFrom(node, month, opts) {
+      var empId = node.getAttribute('data-emp-id');
+      var empName = node.getAttribute('data-emp-name');
+      if (empId && empName) { openEmpModal(empId, empName, month, opts); }
+    }
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-cost-cell'), function (cell) {
+      if (!cell.textContent.trim()) { return; }
+      cell.addEventListener('click', function (e) {
+        // Otherwise this same click reaches the close-on-outside handler.
+        e.stopPropagation();
+        openFrom(cell, cell.getAttribute('data-month'));
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-emp-row'), function (tr) {
+      tr.addEventListener('click', function (e) {
+        e.stopPropagation();
+        // These tables honour the month filter, so the panel must too.
+        openFrom(tr, globalValues.month || null,
+          { noCheckin: tr.getAttribute('data-no-checkin') === '1' });
+      });
+    });
+  }
+
+  // The people behind one Test Results tile, in the same right-hand panel.
+  function openResultsModal(outcome, label) {
+    empModalTitle.textContent = label;
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    // The same filter set the tile was computed from, or the list would not
+    // match the number that was clicked.
+    var filters = filterValues('results');
+    filters.outcome = outcome;
+
+    post('/api/method/cova_clinic_integration.api.test_result_people', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (!rows.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">Nothing to show.</div>';
+          return;
+        }
+
+        var html = '<div class="cdd-visit-total">' +
+                   '<span>' + rows.length + (rows.length === 1 ? ' record' : ' records') + '</span>' +
+                   '</div>';
+
+        rows.forEach(function (r) {
+          var name = r.employee_name || r.employee || '—';
+          // Grouped rows are one per person and have no single record to open.
+          var head = r.route
+            ? '<a class="cdd-visit-date" href="' + esc(r.route) + '" target="_blank" rel="noopener"' +
+              ' title="Open ' + esc(r.name) + '">' + esc(name) +
+              '<span class="cdd-visit-open" aria-hidden="true">&#8599;</span></a>'
+            : '<span class="cdd-visit-date">' + esc(name) + '</span>';
+
+          var meta = [];
+          if (r.payroll_number) {
+            // A pre-employment candidate has no Employee record yet, so the
+            // number shown is their National ID — say which it is.
+            meta.push(esc(r.payroll_number) +
+              (r.member_type === 'Pre Employment' ? ' (ID)' : ''));
+          }
+          if (r.test_package) { meta.push(esc(r.test_package)); }
+          if (res.grouped && r.results) {
+            meta.push(r.results + (r.results === 1 ? ' result' : ' results'));
+          } else if (r.clinical_outcome) {
+            meta.push(esc(r.clinical_outcome));
+          }
+
+          // The date wears the outcome's status colour, the same one the
+          // Clinical Outcomes chart uses, so a scan down the panel reads the
+          // same way as the chart. Never colour alone: the outcome is spelled
+          // out in the meta line directly beneath it.
+          var tone = OUTCOME_COLORS[r.clinical_outcome];
+          var dateStyle = tone ? ' style="color:' + tone + '"' : '';
+
+          html += '<div class="cdd-visit-item">' +
+                  '<div class="cdd-visit-head">' + head +
+                    '<span class="cdd-visit-cost"' + dateStyle + '>' +
+                      esc(r.received || '') + '</span>' +
+                  '</div>' +
+                  (meta.length ? '<div class="cdd-line-note">' + meta.join(' · ') + '</div>' : '') +
+                  '</div>';
+        });
+
+        empModalBody.innerHTML = html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load result list:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load the list.</div>';
+      });
+  }
+
+  function wireKpiDrill() {
+    var host = el('cdd-view');
+    if (!host) { return; }
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-kpi-drill'), function (tile) {
+      function open(e) {
+        e.stopPropagation();
+        openResultsModal(tile.getAttribute('data-drill'), tile.getAttribute('data-drill-label'));
+      }
+      tile.addEventListener('click', open);
+      tile.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e); }
+      });
+    });
+  }
+
+  function openEmpModal(empId, empName, month, opts) {
+    opts = opts || {};
+
+    // Grid columns are keyed by the short label; the heading spells it out.
+    var monthIdx = month ? MONTH_LABELS.indexOf(String(month).toUpperCase()) : -1;
+    var monthFull = monthIdx >= 0 ? MONTH_NAMES[monthIdx] : '';
+
+    // The payroll number only arrives with the rows, so the heading is set
+    // once without it and again as soon as the first visit names it.
+    function setTitle(payroll) {
+      var parts = [empName];
+      if (payroll) { parts.push(payroll); }
+      if (monthFull) { parts.push(monthFull); }
+      if (opts.noCheckin) { parts.push('no checkin'); }
+      empModalTitle.textContent = parts.join(' — ');
+    }
+
+    setTitle('');
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading visits&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    // Fetch visit details for the employee from the breakdown endpoint
+    var filters = { employee: empId };
+
+    // Add date range filters if provided
+    if (globalValues.from_date) { filters.from_date = globalValues.from_date; }
+    if (globalValues.to_date) { filters.to_date = globalValues.to_date; }
+    if (globalValues.year) { filters.year = globalValues.year; }
+    if (opts.noCheckin) { filters.no_checkin = 1; }
+
+    post('/api/method/cova_clinic_integration.api.employee_visit_breakdown', filters)
+      .then(function (res) {
+        if (res && res.currency) { CURRENCY = res.currency; }
+        var allVisits = res && res.visits ? res.visits : [];
+
+        // The cell that was clicked names one month, so narrow to it here —
+        // matched off the label's position, not by parsing "JUL" as a date.
+        var visits = allVisits;
+        if (monthIdx >= 0) {
+          var mm = (monthIdx < 9 ? '0' : '') + (monthIdx + 1);
+          visits = allVisits.filter(function (v) {
+            return v.visit_date && v.visit_date.substring(5, 7) === mm;
+          });
+        }
+
+        // Payroll number is carried on the rows, not on the grid cell.
+        var payroll = (allVisits[0] || {}).payroll_number;
+        if (payroll) { setTitle(payroll); }
+
+        if (!visits.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">No Clinic Visit Cost records for this employee' +
+            (monthFull ? ' in ' + esc(monthFull) : '') + '.</div>';
+          return;
+        }
+
+        var totalCost = 0;
+        var html = '';
+        visits.forEach(function (v) {
+          totalCost += (v.total_cost || 0);
+
+          // Line items are what the money actually went on — the notes carry
+          // the drug or service name, which is the whole point of the panel.
+          var itemsHtml = '';
+          if (v.items && v.items.length) {
+            itemsHtml = '<ul class="cdd-visit-lines">';
+            v.items.forEach(function (item) {
+              itemsHtml += '<li>' +
+                '<span class="cdd-line-purpose">' + esc(item.purpose || 'Unspecified') + '</span>' +
+                '<span class="cdd-line-cost">' + money(item.cost) + '</span>' +
+                (item.notes ? '<span class="cdd-line-note">' + esc(item.notes) + '</span>' : '') +
+                '</li>';
+            });
+            itemsHtml += '</ul>';
+          }
+
+          // The date opens the Clinic Visit Cost record itself, so a figure
+          // that looks wrong can be traced back to the row it came from. The
+          // route is built server-side — the desk prefix moved in v17.
+          var dateCell = v.route
+            ? '<a class="cdd-visit-date" href="' + esc(v.route) + '" target="_blank" rel="noopener"' +
+              ' title="Open ' + esc(v.name) + '">' + esc(v.visit_date || '') +
+              '<span class="cdd-visit-open" aria-hidden="true">&#8599;</span></a>'
+            : '<span class="cdd-visit-date">' + esc(v.visit_date || '') + '</span>';
+
+          html += '<div class="cdd-visit-item">' +
+                  '<div class="cdd-visit-head">' +
+                    dateCell +
+                    '<span class="cdd-visit-cost">' + cash(v.total_cost) + '</span>' +
+                  '</div>' +
+                  itemsHtml +
+                  '</div>';
+        });
+
+        empModalBody.innerHTML =
+          '<div class="cdd-visit-total">' +
+            '<span>' + visits.length + (visits.length === 1 ? ' visit' : ' visits') + '</span>' +
+            '<span>' + cash(totalCost) + '</span>' +
+          '</div>' + html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load employee visits:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load visit details.</div>';
+      });
+  }
+
+  if (empModalClose) {
+    empModalClose.addEventListener('click', closeEmpModal);
+  }
+
+  // The panel is the whole overlay — there is no backdrop element to click, so
+  // "outside" means anywhere in the document that is not inside the panel. The
+  // cell that opens it stops its own click bubbling, or opening would close it
+  // again in the same event.
+  document.addEventListener('click', function (e) {
+    if (!empModal || !empModal.classList.contains('is-open')) { return; }
+    if (!empModal.contains(e.target)) { closeEmpModal(); }
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && empModal && empModal.classList.contains('is-open')) {
+      closeEmpModal();
+    }
+  });
 
   // ── wiring ────────────────────────────────────────────────────────
 

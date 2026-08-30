@@ -1,0 +1,22 @@
+{
+ "action": "Create Entry",
+ "action_label": "Clinic checkin overview",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this is.</b> This page does two different jobs depending on what you fill in. Put in a first and last day off and it becomes a sick note, and the time off is booked for that person automatically. The other part records people tapping in at the clinic door, which is how we know how many visits there have been.<br><br><b>A guided tour.</b> Opening this step walks you through the page one box at a time and explains what each one is for. You can start it again whenever you like with the small <b>i</b> button at the top of the page.<br><br><b>Where to find it.</b> To see the ones already there, open <b>Clinic Checkin</b> from the menu on the left.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "form_tour": "Clinic Checkin Walkthrough",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Follow Clinic Checkins",
+ "owner": "Administrator",
+ "reference_document": "Clinic Checkin",
+ "show_form_tour": 1,
+ "show_full_form": 1,
+ "title": "Clinic Checkin \u2014 sick days and visits",
+ "validate_action": 1
+}

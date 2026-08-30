@@ -127,6 +127,7 @@
  "modified": "2026-08-24 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
+ "module_onboarding": "Cova Clinic Onboarding",
  "name": "Cova Clinic",
  "owner": "Administrator",
  "standard": 1,

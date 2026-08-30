@@ -1,0 +1,21 @@
+{
+ "action": "View Docs",
+ "action_label": "Open the dashboard",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this does.</b> This is the last step, and the reason for all the others. Everything recorded above is gathered here into simple charts and tables: which illnesses are going around, how many people are visiting the clinic, who is off sick, what it is all costing, and how the health checks are going.<br><br>Pick a year and a month at the top and the whole page follows. Clicking a number usually opens the list of people behind it, so you can always see who is being counted.<br><br>Only HR can open it.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Open the Clinic Health Dashboard",
+ "owner": "Administrator",
+ "path": "/health-report",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Clinic Analytics \u2014 see it all in one place",
+ "validate_action": 1
+}

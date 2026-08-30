@@ -17,10 +17,10 @@
         'company',
         'designation',
         'applicant_name',
-        'custom_national_id',
-        'custom_phone_number',
-        'custom_cova_registered',
-        'custom_cova_tested'
+        'national_id',
+        'phone_number',
+        'cova_registered',
+        'cova_tested'
     ];
 
     const add_fields = (prior.add_fields || []).slice();
@@ -86,19 +86,19 @@
                 if (row.docstatus === 2) {
                     return { ok: false, reason: __('Cancelled') };
                 }
-                if (row.custom_cova_tested) {
+                if (row.cova_tested) {
                     return { ok: false, reason: __('Already tested') };
                 }
-                if (!row.custom_national_id) {
+                if (!row.national_id) {
                     return { ok: false, reason: __('No National ID') };
                 }
-                if (!row.custom_phone_number) {
+                if (!row.phone_number) {
                     return { ok: false, reason: __('No Phone Number') };
                 }
-                if (cova_national_ids.indexOf(row.custom_national_id) !== -1) {
+                if (cova_national_ids.indexOf(row.national_id) !== -1) {
                     return { ok: false, reason: __('Already a Cova member') };
                 }
-                return { ok: true, reason: row.custom_cova_registered ? __('Registered, retry') : __('Ready') };
+                return { ok: true, reason: row.cova_registered ? __('Registered, retry') : __('Ready') };
             }
 
             function review(selected, cova_national_ids) {
@@ -144,8 +144,8 @@
                     const cls = x.verdict.ok ? 'text-success' : 'text-muted';
                     html += '<tr>';
                     html += '<td>' + frappe.utils.escape_html(x.row.applicant_name || x.row.name) + '</td>';
-                    html += '<td>' + (x.row.custom_national_id
-                        ? frappe.utils.escape_html(x.row.custom_national_id)
+                    html += '<td>' + (x.row.national_id
+                        ? frappe.utils.escape_html(x.row.national_id)
                         : '<span class="text-danger">' + __('missing') + '</span>') + '</td>';
                     html += '<td>' + frappe.utils.escape_html(x.row.designation || '') + '</td>';
                     html += '<td class="' + cls + '">' + x.verdict.reason + '</td>';
@@ -161,9 +161,64 @@
                 return html;
             }
 
+            // What actually happened to one candidate. The endpoint no longer
+            // raises when COVA rejects a row — it returns COVA's own message —
+            // so a failure has a reason worth showing instead of being reduced
+            // to a number. A 200 with status "duplicate" means the candidate was
+            // already enrolled: not an error, and not a new registration.
+            function read_outcome(data) {
+                const msg = (data && data.message) || {};
+
+                if (data && data._server_messages) {
+                    let reason = data._server_messages;
+                    try {
+                        reason = JSON.parse(data._server_messages)
+                            .map(function(m) { try { return JSON.parse(m).message; } catch (e) { return m; } })
+                            .join(' ');
+                    } catch (e) { /* leave it as the raw string */ }
+                    return { state: 'failed', reason: frappe.utils.strip_html(String(reason)) };
+                }
+                if (data && data.exc_type) {
+                    return { state: 'failed', reason: data.exc_type };
+                }
+                if (msg && msg.error) {
+                    return { state: 'failed', reason: msg.error };
+                }
+                // The registration and the test submission are reported separately.
+                const registration = msg.registration || {};
+                const submission = msg.test_submission || {};
+
+                if (registration.status === 'duplicate') {
+                    return { state: 'duplicate', reason: registration.message || __('Already enrolled on Cova') };
+                }
+
+                // COVA reports a partly-completed registration as an HTTP error
+                // that still carries a covaMemberId — the member does exist. The
+                // server says so with `registered`, and calling that a failure
+                // sends someone off to re-enrol a candidate who is already on the
+                // scheme and whose test has already been accepted.
+                if (msg.registered === false || (msg.registered === undefined && registration.error)) {
+                    return { state: 'failed', reason: registration.error || __('Registration refused') };
+                }
+                if (submission.error) {
+                    return {
+                        state: 'failed',
+                        reason: __('Registered, but the test request was refused: {0}', [submission.error])
+                    };
+                }
+                if (msg.warning) {
+                    return { state: 'warning', reason: msg.warning };
+                }
+                return { state: 'done' };
+            }
+
             function run_bulk(offers) {
                 const total = offers.length;
-                let done = 0, failed = 0, processed = 0;
+                let done = 0, duplicates = 0, processed = 0;
+                const failures = [];
+                // Registered, but something after the member did not complete —
+                // counted as done, listed so it is not lost.
+                const warnings = [];
                 frappe.dom.freeze(__('Processing {0} candidate(s)...', [total]));
 
                 offers.forEach(function(offer_name) {
@@ -176,18 +231,61 @@
                     .then(function(text) {
                         let data;
                         try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
-                        const msg = data.message || {};
-                        if (msg && !msg.error) { done++; } else { failed++; }
+                        const outcome = read_outcome(data);
+                        if (outcome.state === 'done') { done++; }
+                        else if (outcome.state === 'duplicate') { duplicates++; }
+                        else if (outcome.state === 'warning') {
+                            done++;
+                            warnings.push({ name: offer_name, reason: outcome.reason });
+                        }
+                        else { failures.push({ name: offer_name, reason: outcome.reason }); }
                     })
-                    .catch(function() { failed++; })
+                    .catch(function(err) {
+                        failures.push({ name: offer_name, reason: String(err) });
+                    })
                     .finally(function() {
                         processed++;
                         if (processed === total) {
                             frappe.dom.unfreeze();
+                            let message = __('Registered & requested: {0}', [done]);
+                            if (duplicates) {
+                                message += '<br>' + __('Already on Cova (skipped): {0}', [duplicates]);
+                            }
+                            if (warnings.length) {
+                                message += '<br>' + __('Registered with a warning: {0}', [warnings.length]);
+                            }
+                            message += '<br>' + __('Failed: {0}', [failures.length]);
+                            if (warnings.length) {
+                                message += '<div style="max-height:200px;overflow-y:auto;margin-top:10px;' +
+                                    'border:1px solid var(--border-color);border-radius:6px;">' +
+                                    '<table class="table table-bordered" style="margin:0;font-size:13px;">' +
+                                    '<thead style="position:sticky;top:0;background:var(--fg-color);z-index:1;">' +
+                                    '<tr><th>' + __('Job Offer') + '</th><th>' + __('Registered, but') +
+                                    '</th></tr></thead><tbody>';
+                                warnings.forEach(function(w) {
+                                    message += '<tr><td>' + frappe.utils.escape_html(w.name) + '</td><td>' +
+                                        frappe.utils.escape_html(String(w.reason)) + '</td></tr>';
+                                });
+                                message += '</tbody></table></div>';
+                            }
+                            if (failures.length) {
+                                message += '<div style="max-height:320px;overflow-y:auto;margin-top:10px;' +
+                                    'border:1px solid var(--border-color);border-radius:6px;">' +
+                                    '<table class="table table-bordered" style="margin:0;font-size:13px;">' +
+                                    '<thead style="position:sticky;top:0;background:var(--fg-color);z-index:1;">' +
+                                    '<tr><th>' + __('Job Offer') + '</th><th>' + __('Why it failed') +
+                                    '</th></tr></thead><tbody>';
+                                failures.forEach(function(f) {
+                                    message += '<tr><td>' + frappe.utils.escape_html(f.name) + '</td><td>' +
+                                        frappe.utils.escape_html(String(f.reason || __('Unknown error'))) +
+                                        '</td></tr>';
+                                });
+                                message += '</tbody></table></div>';
+                            }
                             frappe.msgprint({
                                 title: __('Pre-Employment Complete'),
-                                message: __('Registered & requested: {0}<br>Failed: {1}', [done, failed]),
-                                indicator: failed ? 'orange' : 'green'
+                                message: message,
+                                indicator: failures.length ? 'orange' : 'green'
                             });
                             listview.clear_checked_items();
                             listview.refresh();

@@ -1,0 +1,21 @@
+{
+ "action": "Go to Page",
+ "action_label": "Register an employee",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this does.</b> Open an employee and use <b>Clinic &rsaquo; Register to Cova</b>. This tells the clinic the person is covered, so they can walk in and be treated.<br><br>You can sign up a whole group at once from the employee list.<br><br>If someone was signed off before and has come back, registering them again simply switches them back on. There is nothing special to do for a rehire.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Register an Employee to Cova",
+ "owner": "Administrator",
+ "path": "List/Employee",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Sign an employee up with the clinic",
+ "validate_action": 1
+}

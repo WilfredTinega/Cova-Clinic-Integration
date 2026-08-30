@@ -427,6 +427,24 @@ html, body { height: 100%; overflow: hidden; }
 .cdd-kpi .l { font-size: 12px; color: var(--cdd-ink-muted); margin-top: 8px; font-weight: 500; }
 .cdd-kpi .s { font-size: 11px; color: var(--cdd-ink-faint); margin-top: 3px; }
 
+/* Drillable tile. Every tile lifts on hover already, so opening a panel needs a
+   signal of its own — the pointer, and the number picking up the accent. */
+.cdd-kpi-drill { cursor: pointer; }
+.cdd-kpi-drill:hover { border-color: var(--cdd-accent); }
+.cdd-kpi-drill:hover .v { color: var(--cdd-accent); }
+.cdd-kpi-drill:focus-visible {
+  outline: 2px solid var(--cdd-accent); outline-offset: 2px;
+}
+/* A quiet corner mark so the tiles that open something are tellable at rest. */
+.cdd-kpi-drill { position: relative; }
+.cdd-kpi-drill::after {
+  content: "\2197";
+  position: absolute; top: 10px; right: 12px;
+  font-size: 11px; color: var(--cdd-ink-faint);
+  opacity: .55; transition: opacity .12s, color .12s;
+}
+.cdd-kpi-drill:hover::after { opacity: 1; color: var(--cdd-accent); }
+
 /* Charts */
 .cdd-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
 .cdd-charts-row.is-single { grid-template-columns: 1fr; }
@@ -451,6 +469,18 @@ html, body { height: 100%; overflow: hidden; }
   color: var(--cdd-ink-muted);
 }
 #cova-clinic-app th:first-child, #cova-clinic-app td:first-child { text-align: left; }
+
+/* Sortable header. The arrow is always in the flow so switching columns never
+   shifts the row; it just fades up from nothing until the column is in use. */
+#cova-clinic-app th.cdd-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+#cova-clinic-app th.cdd-sort:hover { color: var(--cdd-ink); }
+#cova-clinic-app th.cdd-sort.is-active { color: var(--cdd-accent); }
+#cova-clinic-app th.cdd-sort:focus-visible {
+  outline: 2px solid var(--cdd-accent); outline-offset: -2px;
+}
+.cdd-caret { margin-left: 4px; font-size: 9px; opacity: 0; transition: opacity .12s ease; }
+#cova-clinic-app th.cdd-sort:hover .cdd-caret { opacity: .45; }
+#cova-clinic-app th.cdd-sort.is-active .cdd-caret { opacity: 1; }
 #cova-clinic-app td.cond { font-weight: 600; position: sticky; left: 0; background: var(--cdd-white); z-index: 1; color: var(--cdd-ink); }
 #cova-clinic-app tbody tr:hover td { background: var(--cdd-wash); }
 #cova-clinic-app tbody tr:hover td.cond { background: var(--cdd-wash); }
@@ -464,9 +494,116 @@ html, body { height: 100%; overflow: hidden; }
 }
 #cova-clinic-app tr.total-row td.cond { background: var(--cdd-ink) !important; color: var(--cdd-white) !important; }
 
+/* Employee breakdown modal */
+.cdd-emp-row { cursor: pointer; transition: background .12s; }
+#cova-clinic-app tbody tr.cdd-emp-row:hover td { background: var(--cdd-accent) !important; color: var(--cdd-white) !important; }
+
+.cdd-modal-overlay {
+  position: fixed; top: 0; right: -400px; bottom: 0; width: 400px;
+  background: var(--cdd-white); border-left: 1px solid var(--cdd-hairline);
+  box-shadow: -4px 0 16px rgba(17,17,17,0.12);
+  z-index: 50; overflow-y: auto; transition: right .2s ease;
+  display: flex; flex-direction: column;
+}
+.cdd-modal-overlay.is-open { right: 0; }
+
+.cdd-modal-header {
+  flex: 0 0 auto; padding: 20px 24px; border-bottom: 1px solid var(--cdd-hairline);
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.cdd-modal-header h3 { margin: 0; font-size: 16px; font-weight: 700; color: var(--cdd-ink); }
+.cdd-modal-close {
+  flex: 0 0 24px; height: 24px; border: 0; background: transparent; color: var(--cdd-ink-muted);
+  font-size: 20px; cursor: pointer; line-height: 1; padding: 0;
+}
+.cdd-modal-close:hover { color: var(--cdd-ink); }
+
+.cdd-modal-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 20px 24px;
+}
+.cdd-modal-empty {
+  text-align: center; padding: 40px 20px;
+  font-size: 13px; color: var(--cdd-ink-muted);
+}
+
+/* Visit breakdown: one block per Clinic Visit Cost, its line items beneath. */
+.cdd-visit-total {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 0 0 12px; margin-bottom: 4px;
+  border-bottom: 2px solid var(--cdd-ink);
+  font-size: 15px; font-weight: 700;
+}
+.cdd-visit-total span:first-child {
+  font-size: 12px; font-weight: 600; color: var(--cdd-ink-muted);
+  text-transform: uppercase; letter-spacing: .04em;
+}
+
+.cdd-visit-item { padding: 14px 0; border-bottom: 1px solid var(--cdd-hairline); }
+.cdd-visit-item:last-child { border-bottom: 0; }
+.cdd-visit-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+}
+.cdd-visit-date { font-size: 13px; font-weight: 700; color: var(--cdd-ink); }
+a.cdd-visit-date { text-decoration: none; }
+a.cdd-visit-date:hover { color: var(--cdd-accent); text-decoration: underline; }
+/* The arrow only earns its space once the row is being pointed at. */
+.cdd-visit-open { margin-left: 5px; font-size: 11px; opacity: 0; transition: opacity .12s ease; }
+a.cdd-visit-date:hover .cdd-visit-open,
+a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
+.cdd-visit-cost { font-size: 13px; font-weight: 700; color: var(--cdd-accent); }
+
+.cdd-visit-lines { list-style: none; margin: 8px 0 0; padding: 0; }
+.cdd-visit-lines li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 12px;
+  padding: 5px 0 5px 10px;
+  border-left: 2px solid var(--cdd-hairline);
+  margin-top: 4px;
+}
+.cdd-line-purpose { font-size: 12px; font-weight: 600; color: var(--cdd-ink); }
+.cdd-line-cost { font-size: 12px; color: var(--cdd-ink); font-variant-numeric: tabular-nums; }
+.cdd-line-note {
+  grid-column: 1 / -1;
+  font-size: 11px; color: var(--cdd-ink-muted); line-height: 1.4; margin-top: 2px;
+}
+
+@media (max-width: 1200px) {
+  .cdd-modal-overlay { width: 350px; }
+}
+@media (max-width: 768px) {
+  .cdd-modal-overlay { width: 100%; right: -100% !important; }
+}
+
 /* Heat cells: a single-hue (neutral) sequential ramp, light -> dark. The 2px
    white gutter keeps adjacent filled cells from reading as one block. */
 .heat { font-weight: 600; border-radius: 4px; box-shadow: inset 0 0 0 2px var(--cdd-white); }
+
+/* Skeleton loading */
+@keyframes cdd-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.cdd-skeleton { padding: 0; }
+.cdd-skeleton-box {
+  background: var(--cdd-cream);
+  border-radius: 6px;
+  animation: cdd-pulse 2s ease-in-out infinite;
+}
+.cdd-skeleton-chart {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--cdd-cream) 0%,
+    var(--cdd-wash) 50%,
+    var(--cdd-cream) 100%
+  );
+  background-size: 200% 100%;
+  animation: cdd-pulse 2s ease-in-out infinite;
+  border-radius: 8px;
+}
 
 .cdd-loading { padding: 40px; text-align: center; color: var(--cdd-ink-muted); }
 .cdd-empty { padding: 30px; text-align: center; color: var(--cdd-ink-muted); font-size: 13px; }
