@@ -16,15 +16,17 @@ from cova_clinic_integration.setup import (
 	install_clinic_fields,
 )
 
-# Carried over to Job Offer. Order matters only for readability.
-MOVED_FIELDS = [
-	"custom_national_id",
-	"custom_date_of_birth",
-	"custom_gender",
-	"custom_cova_registered",
-	"custom_cova_tested",
-	"custom_linked_test_result",
-]
+# Legacy Job Applicant column -> the Job Offer fieldname it lands in. The
+# source names keep their `custom_` prefix (that is how the old version created
+# them); the destinations are the plain fieldnames the app installs today.
+MOVED_FIELDS = {
+	"custom_national_id": "national_id",
+	"custom_date_of_birth": "date_of_birth",
+	"custom_gender": "gender",
+	"custom_cova_registered": "cova_registered",
+	"custom_cova_tested": "cova_tested",
+	"custom_linked_test_result": "linked_test_result",
+}
 
 # Removed from Job Applicant without a destination: `custom_company` is
 # redundant on Job Offer, and the column break was pure layout.
@@ -36,7 +38,7 @@ def execute():
 		return
 
 	ja_columns = set(frappe.db.get_table_columns("Job Applicant"))
-	if not any(fn in ja_columns for fn in MOVED_FIELDS + DROPPED_FIELDS):
+	if not any(fn in ja_columns for fn in list(MOVED_FIELDS) + DROPPED_FIELDS):
 		return
 
 	# The Job Offer fields are created by an after_migrate hook that has not run
@@ -44,7 +46,11 @@ def execute():
 	install_clinic_fields()
 
 	jo_columns = set(frappe.db.get_table_columns("Job Offer"))
-	movable = [fn for fn in MOVED_FIELDS if fn in ja_columns and fn in jo_columns]
+	movable = {
+		source: target
+		for source, target in MOVED_FIELDS.items()
+		if source in ja_columns and target in jo_columns
+	}
 
 	if len(movable) < len([fn for fn in MOVED_FIELDS if fn in ja_columns]):
 		# Job Offer did not get every field (developer_mode off, most likely).
@@ -52,7 +58,7 @@ def execute():
 		frappe.log_error(
 			title="COVA move to Job Offer skipped",
 			message="Job Offer is missing columns %s; Job Applicant fields left in place."
-			% sorted(set(MOVED_FIELDS) - set(movable)),
+			% sorted(set(MOVED_FIELDS.values()) - set(movable.values())),
 		)
 		return
 
@@ -61,9 +67,12 @@ def execute():
 	frappe.db.commit()
 
 
-def _copy_to_job_offers(fieldnames):
-	"""Fill each Job Offer's empty COVA fields from its linked Job Applicant."""
-	cols = ", ".join("ja.`%s`" % fn for fn in fieldnames)
+def _copy_to_job_offers(field_map):
+	"""Fill each Job Offer's empty COVA fields from its linked Job Applicant.
+
+	`field_map` is {Job Applicant column: Job Offer fieldname}.
+	"""
+	cols = ", ".join("ja.`%s`" % fn for fn in field_map)
 	rows = frappe.db.sql(
 		"""
 		select jo.name as offer, {cols}
@@ -74,11 +83,16 @@ def _copy_to_job_offers(fieldnames):
 		as_dict=True,
 	)
 
+	targets = list(field_map.values())
 	for row in rows:
-		values = {fn: row.get(fn) for fn in fieldnames if row.get(fn) not in (None, "", 0)}
+		values = {
+			target: row.get(source)
+			for source, target in field_map.items()
+			if row.get(source) not in (None, "", 0)
+		}
 		if not values:
 			continue
-		current = frappe.db.get_value("Job Offer", row.offer, fieldnames, as_dict=True) or {}
+		current = frappe.db.get_value("Job Offer", row.offer, targets, as_dict=True) or {}
 		# Never overwrite something already recorded against the offer.
 		values = {fn: v for fn, v in values.items() if current.get(fn) in (None, "", 0)}
 		if values:
@@ -86,7 +100,7 @@ def _copy_to_job_offers(fieldnames):
 
 
 def _strip_job_applicant(ja_columns):
-	stale = set(MOVED_FIELDS + DROPPED_FIELDS)
+	stale = set(MOVED_FIELDS) | set(DROPPED_FIELDS)
 
 	dt = frappe.get_doc("DocType", "Job Applicant")
 	kept = [f for f in dt.fields if f.fieldname not in stale]

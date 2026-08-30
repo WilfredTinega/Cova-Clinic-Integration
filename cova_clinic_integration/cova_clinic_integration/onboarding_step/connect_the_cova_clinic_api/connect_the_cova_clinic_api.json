@@ -1,0 +1,22 @@
+{
+ "action": "Show Form Tour",
+ "action_label": "Walk through the settings, then save them",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "Base URL, API key and the register / deactivation / test-request endpoints.\n\nThe **Company** matters beyond the API calls: it is published to the client on boot, and the COVA block on Job Offer only appears for offers of that company. Pick the wrong one and the pre-employment fields stay hidden everywhere.\n\nDo this one first \u2014 nothing else in this list works until it is set.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "form_tour": "Cova Clinic Settings Walkthrough",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 1,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Connect the COVA Clinic API",
+ "owner": "Administrator",
+ "reference_document": "Cova Clinic Settings",
+ "show_form_tour": 1,
+ "show_full_form": 0,
+ "title": "Connect the COVA Clinic API",
+ "validate_action": 1
+}

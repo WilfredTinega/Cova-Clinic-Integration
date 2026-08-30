@@ -159,7 +159,7 @@
   {
    "group": "Recruitment",
    "link_doctype": "Job Offer",
-   "link_fieldname": "custom_linked_test_result"
+   "link_fieldname": "linked_test_result"
   }
  ],
  "modified": "2026-07-30 12:18:55.430750",

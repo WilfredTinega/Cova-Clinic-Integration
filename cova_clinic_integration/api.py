@@ -71,6 +71,80 @@ def build_headers():
 	return headers
 
 
+def cova_post(url, headers, payload):
+	"""POST to COVA and always come back with a dict.
+
+	``make_post_request`` calls ``raise_for_status()``, so any 4xx/5xx becomes an
+	exception **and the response body is thrown away** — which is the one thing
+	worth having, because COVA puts the reason in it. Every call site here checks
+	``result.get("error")``, a contract that was therefore never met on failure:
+	a single rejected row aborted the whole bulk run with a raw traceback instead
+	of being counted and explained.
+
+	Returns COVA's parsed body on success. On failure returns
+	``{"error": ..., "status_code": ..., "cova_response": ...}`` — never raises,
+	so a bulk sweep degrades row by row.
+	"""
+	try:
+		result = make_post_request(url, headers=headers, json=payload)
+	except Exception as exc:
+		response = getattr(exc, "response", None)
+		body = None
+		status_code = None
+		if response is not None:
+			status_code = response.status_code
+			try:
+				body = response.json()
+			except Exception:
+				body = (response.text or "")[:2000]
+
+		# COVA states its own reason in the body; fall back to the exception text
+		# (a timeout or DNS failure has no body at all).
+		message = None
+		if isinstance(body, dict):
+			message = body.get("message") or body.get("error") or body.get("detail")
+		if not message:
+			message = str(exc)
+
+		frappe.log_error(
+			title=("COVA POST failed · " + str(status_code or "no response"))[:140],
+			message=json.dumps(
+				{"url": url, "request": payload, "status_code": status_code, "response": body},
+				default=str,
+				indent=2,
+			),
+		)
+		return {"error": message, "status_code": status_code, "cova_response": body}
+
+	# A 200 is not automatically a success: COVA answers an already-enrolled
+	# member with {"status": "duplicate", ...}. Hand that back as-is — callers
+	# read `status` — but make sure we always return something dict-shaped, since
+	# make_post_request returns None for an empty body and a str for text/plain.
+	if isinstance(result, dict):
+		return result
+	return {"cova_response": result}
+
+
+def cova_member_id_of(result):
+	"""The member id COVA reported, whether it succeeded outright or not.
+
+	COVA answers a partly-completed registration with **HTTP 400** and a body
+	like ``{"message": "Member created but wallet provisioning failed: ",
+	"covaMemberId": "CHSC00015646"}``. The member does exist at that point, so
+	reading the id only from the success path loses the link: the Employee keeps
+	no ``cova_member_id``, every later sweep re-registers them, and COVA answers
+	"duplicate" forever. Look in the error body too.
+	"""
+	if not isinstance(result, dict):
+		return ""
+	member_id = result.get("covaMemberId")
+	if not member_id:
+		body = result.get("cova_response")
+		if isinstance(body, dict):
+			member_id = body.get("covaMemberId")
+	return member_id or ""
+
+
 def normalize_phone(phone):
 	"""Best-effort E.164 for the Kenyan numbers this integration handles.
 
@@ -191,12 +265,19 @@ def save_cova_response(cm_name, result):
 		"package_code": "packageCode",
 		"patient_id": "patientId",
 	}
+	# A partly-completed registration comes back as an HTTP error whose body still
+	# carries covaMemberId, walletId and the rest. Read through to it, or a member
+	# COVA did create is stored here with none of its identifiers.
+	source = result if isinstance(result, dict) else {}
+	if not source.get("covaMemberId") and isinstance(source.get("cova_response"), dict):
+		source = {**source["cova_response"], **{k: v for k, v in source.items() if k != "cova_response"}}
+
 	# doc.save() writes only columns that physically exist, so this is safe before/after
 	# the fields' columns are materialised by a deploy; never let capture break the flow.
 	try:
 		cm = frappe.get_doc("Cova Members", cm_name)
 		for erp_field in mapping:
-			v = result.get(mapping[erp_field])
+			v = source.get(mapping[erp_field])
 			if v is not None:
 				cm.set(erp_field, v)
 		cm.set("cova_raw", json.dumps(result, default=str))
@@ -254,7 +335,7 @@ def register_one(base_url, register_endpoint, headers, emp):
 		"gender": emp.gender or "",
 		"phone": normalize_phone(emp.cell_number),
 	}
-	result = make_post_request(base_url + register_endpoint, headers=headers, json=payload)
+	result = cova_post(base_url + register_endpoint, headers, payload)
 	if result.get("covaMemberId"):
 		try:
 			frappe.db.set_value("Employee", emp.name, "cova_member_id", result.get("covaMemberId"))
@@ -279,9 +360,7 @@ def deactivate_one(base_url, deactivation_endpoint, headers, emp):
 		"exitDate": str(emp.relieving_date) if emp.get("relieving_date") else "",
 		"requiresExitMedical": False,
 	}
-	result = make_post_request(
-		base_url + deactivation_endpoint, headers=headers, json=payload
-	)
+	result = cova_post(base_url + deactivation_endpoint, headers, payload)
 	if not result.get("error"):
 		frappe.db.set_value("Employee", emp.name, "cova_deactivated", 1)
 	return result
@@ -298,6 +377,14 @@ def cova_clinic_api():
 	action = data.get("action")
 	resp = None
 
+	# Document names are strings. A caller that sends a payroll-style id as a
+	# JSON number ("employee": 101253) would otherwise reach the ORM as an int,
+	# and `name = 101253` against a varchar column makes MySQL cast every row —
+	# which errors outright on the ids that are not numeric.
+	for key in ("employee", "job_applicant", "cova_member"):
+		if isinstance(data.get(key), int | float):
+			data[key] = str(data[key])
+
 	# ─── 1. REGISTER MEMBER (single) ──────────────────────────────────
 	if action == "register_member":
 		base_url = frappe.db.get_single_value("Cova Clinic Settings", "base_url")
@@ -309,16 +396,22 @@ def cova_clinic_api():
 		emp = None
 
 		if member_type == "Active":
-			emp = frappe.get_doc("Employee", employee)
-			payload = {
-				"schemeType": "Active",
-				"payrollNumber": employee_payroll_id(emp),
-				"fullName": emp.employee_name,
-				"nationalId": emp.get("national_id") or "",
-				"dateOfBirth": str(emp.date_of_birth) if emp.date_of_birth else "",
-				"gender": emp.gender or "",
-				"phone": normalize_phone(emp.cell_number),
-			}
+			if not employee:
+				resp = {"error": "employee is required for Active member registration"}
+			else:
+				try:
+					emp = frappe.get_doc("Employee", employee)
+					payload = {
+						"schemeType": "Active",
+						"payrollNumber": employee_payroll_id(emp),
+						"fullName": emp.employee_name,
+						"nationalId": emp.get("national_id") or "",
+						"dateOfBirth": str(emp.date_of_birth) if emp.date_of_birth else "",
+						"gender": emp.gender or "",
+						"phone": normalize_phone(emp.cell_number),
+					}
+				except frappe.DoesNotExistError:
+					resp = {"error": f"Employee {employee} does not exist"}
 		else:
 			payload = {
 				"schemeType": "PreEmployment",
@@ -329,33 +422,36 @@ def cova_clinic_api():
 				"phone": normalize_phone(data.get("phone_number")),
 			}
 
-		result = make_post_request(base_url + register_endpoint, headers=headers, json=payload)
+		if not resp:
+			result = cova_post(base_url + register_endpoint, headers, payload)
 
-		if member_type == "Active" and result.get("covaMemberId"):
-			try:
-				frappe.db.set_value("Employee", employee, "cova_member_id", result.get("covaMemberId"))
-			except Exception:
-				pass
+			# Written even when COVA returned an error status: a "wallet
+			# provisioning failed" 400 still carries a real member id, and
+			# dropping it would make every later run re-register the employee.
+			member_id = cova_member_id_of(result)
+			if member_type == "Active" and member_id:
+				try:
+					frappe.db.set_value("Employee", employee, "cova_member_id", member_id)
+				except Exception:
+					pass
 
-		# Registering again clears the deactivation flag, whether or not Cova
-		# returned a member id (a mocked or partial reply still means registered).
-		if member_type == "Active" and employee and not result.get("error"):
-			frappe.db.set_value("Employee", employee, "cova_deactivated", 0)
+			# Registering again clears the deactivation flag, whether or not Cova
+			# returned a member id (a mocked or partial reply still means registered).
+			if member_type == "Active" and employee and not result.get("error"):
+				frappe.db.set_value("Employee", employee, "cova_deactivated", 0)
 
-		# Create/refresh the Cova Member and store COVA's registration response on it.
-		if member_type == "Active":
-			cm_name = create_or_update_cova_member(
-				"Active", employee, "", emp.employee_name, employee_payroll_id(emp), emp.cell_number or "", emp.gender or "",
-				activate=not result.get("error"),
-			)
-		else:
-			cm_name = create_or_update_cova_member(
-				"Pre Employment", "", data.get("nationa_id") or "", data.get("full_name") or "", "", data.get("phone_number") or "", data.get("gender") or "",
-				activate=not result.get("error"),
-			)
-		save_cova_response(cm_name, result)
-
-		resp = result
+			# Create/refresh the Cova Member and store COVA's registration response on it.
+			if member_type == "Active":
+				cm_name = create_or_update_cova_member(
+					"Active", employee, "", emp.employee_name, employee_payroll_id(emp), emp.cell_number or "", emp.gender or "",
+					activate=not result.get("error"),
+				)
+			else:
+				cm_name = create_or_update_cova_member(
+					"Pre Employment", "", data.get("nationa_id") or "", data.get("full_name") or "", "", data.get("phone_number") or "", data.get("gender") or "",
+					activate=not result.get("error"),
+				)
+			save_cova_response(cm_name, result)
 
 	# ─── 2. DEACTIVATE MEMBER (single) ────────────────────────────────
 	elif action == "deactivate_member":
@@ -390,7 +486,7 @@ def cova_clinic_api():
 			req_doc.insert(ignore_permissions=True)
 			exit_request = req_doc.name
 
-		result = make_post_request(base_url + deactivation_endpoint, headers=headers, json=payload)
+		result = cova_post(base_url + deactivation_endpoint, headers, payload)
 
 		# Update Cova Member to Inactive
 		cm_name = frappe.db.get_value("Cova Members", {"employee": employee}, "name")
@@ -411,50 +507,73 @@ def cova_clinic_api():
 		headers = build_headers()
 
 		registered = 0
+		duplicates = 0
 		register_failed = 0
 		deactivated = 0
 		deactivate_failed = 0
+		# Why each row failed, so a sweep of 4000 employees is diagnosable
+		# without going through the Error Log one entry at a time.
+		failures = []
 
 		to_register = frappe.db.get_all(
 			"Employee",
 			filters={"status": "Active", "cova_member_id": ["in", ["", None]]},
-			fields=["name", "employee_number", "employee_name", "national_id", "date_of_birth", "gender", "cell_number"],
+			# Only the name is used — every row is re-read with frappe.get_doc below.
+			# Naming any other column here is a portability trap: `national_id` is
+			# owned by csf_ke, so on a site without it this query dies with
+			# "Unknown column 'national_id'" and sync_members never runs.
+			pluck="name",
 		)
 
-		for row in to_register:
-			emp = frappe.get_doc("Employee", row.name)
+		for name in to_register:
+			emp = frappe.get_doc("Employee", name)
 			try:
 				result = register_one(base_url, register_endpoint, headers, emp)
 				if result.get("error"):
 					register_failed = register_failed + 1
+					failures.append({"employee": name, "action": "register", "reason": result["error"]})
+				elif result.get("status") == "duplicate":
+					# COVA answers an already-enrolled member with a 200 and
+					# status=duplicate. Counting it as a fresh registration
+					# overstates what the sweep actually did.
+					duplicates = duplicates + 1
 				else:
 					registered = registered + 1
-			except Exception:
+			except Exception as exc:
 				register_failed = register_failed + 1
+				failures.append({"employee": name, "action": "register", "reason": str(exc)})
+				frappe.log_error(title="COVA sync_members register", message=frappe.get_traceback())
 
 		to_deactivate = frappe.db.get_all(
 			"Employee",
 			filters={"status": ["!=", "Active"], "cova_member_id": ["not in", ["", None]], "cova_deactivated": 0},
-			fields=["name", "employee_number", "cova_member_id", "relieving_date"],
+			pluck="name",
 		)
 
-		for row in to_deactivate:
-			emp = frappe.get_doc("Employee", row.name)
+		for name in to_deactivate:
+			emp = frappe.get_doc("Employee", name)
 			try:
 				result = deactivate_one(base_url, deactivation_endpoint, headers, emp)
 				if result.get("error"):
 					deactivate_failed = deactivate_failed + 1
+					failures.append({"employee": name, "action": "deactivate", "reason": result["error"]})
 				else:
 					deactivated = deactivated + 1
-			except Exception:
+			except Exception as exc:
 				deactivate_failed = deactivate_failed + 1
+				failures.append({"employee": name, "action": "deactivate", "reason": str(exc)})
+				frappe.log_error(title="COVA sync_members deactivate", message=frappe.get_traceback())
 
 		resp = {
 			"status": "sync complete",
 			"registered": registered,
+			"duplicates": duplicates,
 			"register_failed": register_failed,
 			"deactivated": deactivated,
 			"deactivate_failed": deactivate_failed,
+			# Capped: a sweep where everything fails must not return 4000 rows.
+			"failures": failures[:50],
+			"failure_count": len(failures),
 		}
 
 	# ─── 4. SUBMIT TEST REQUEST ───────────────────────────────────────
@@ -489,7 +608,7 @@ def cova_clinic_api():
 				"phone": normalize_phone(doc.phone_number),
 			}
 
-		result = make_post_request(base_url + test_request_endpoint, headers=headers, json=payload)
+		result = cova_post(base_url + test_request_endpoint, headers, payload)
 
 		# Status stays Pending until the test result webhook comes back from Cova
 		resp = result
@@ -504,19 +623,19 @@ def cova_clinic_api():
 		offer_name = data.get("job_offer")
 		offer = frappe.get_doc("Job Offer", offer_name)
 
-		national_id = offer.get("custom_national_id") or ""
+		national_id = offer.get("national_id") or ""
 		full_name = offer.get("applicant_name") or ""
-		date_of_birth = str(offer.get("custom_date_of_birth")) if offer.get("custom_date_of_birth") else ""
-		gender = offer.get("custom_gender") or ""
-		# Falls back to the linked applicant for offers predating custom_phone_number.
-		phone = offer.get("custom_phone_number") or ""
+		date_of_birth = str(offer.get("date_of_birth")) if offer.get("date_of_birth") else ""
+		gender = offer.get("gender") or ""
+		# Falls back to the linked applicant for offers predating phone_number.
+		phone = offer.get("phone_number") or ""
 		if not phone and offer.get("job_applicant"):
 			phone = frappe.db.get_value("Job Applicant", offer.job_applicant, "phone_number") or ""
 
 		# Normalize phone to E.164 with Kenya country code (Phone field requires a country code)
 		phone = normalize_phone(phone)
 
-		if offer.get("custom_cova_tested"):
+		if offer.get("cova_tested"):
 			resp = {"error": "Candidate already tested. Pre-employment is locked to one test."}
 		elif not national_id:
 			resp = {"error": "National ID is required for pre-employment registration."}
@@ -526,7 +645,7 @@ def cova_clinic_api():
 			req_doc.member_type = "Pre Employment"
 			req_doc.nationa_id = national_id
 			req_doc.full_name = full_name
-			req_doc.date_of_birth = offer.get("custom_date_of_birth")
+			req_doc.date_of_birth = offer.get("date_of_birth")
 			req_doc.gender = gender
 			req_doc.phone_number = phone
 			req_doc.status = "Pending"
@@ -545,7 +664,7 @@ def cova_clinic_api():
 				"gender": gender,
 				"phone": phone,
 			}
-			register_result = make_post_request(base_url + register_endpoint, headers=headers, json=register_payload)
+			register_result = cova_post(base_url + register_endpoint, headers, register_payload)
 
 			# Step 3: submit the single PreEmploymentWellness test (same test endpoint)
 			test_payload = {
@@ -563,24 +682,38 @@ def cova_clinic_api():
 				},
 				"notes": req_doc.notes,
 			}
-			test_result = make_post_request(base_url + test_request_endpoint, headers=headers, json=test_payload)
+			test_result = cova_post(base_url + test_request_endpoint, headers, test_payload)
 
-			# Step 4: create Cova Member and store COVA's registration response on it
+			# Step 4: create Cova Member and store COVA's registration response on it.
+			#
+			# COVA answers a partly-completed registration with an HTTP 400 whose
+			# body still carries a covaMemberId — "member created but wallet
+			# provisioning failed". The member exists at that point, so treat it
+			# as registered: marking it Inactive would hide a real member, and the
+			# next sweep would try to enrol them all over again.
+			member_id = cova_member_id_of(register_result)
+			registered = bool(member_id) or not register_result.get("error")
 			cm_name = create_or_update_cova_member(
 				"Pre Employment", "", national_id, full_name, "", phone, gender,
-				activate=not register_result.get("error"),
+				activate=registered,
 			)
 			save_cova_response(cm_name, register_result)
 
 			# Step 5: mark offer registered
-			frappe.db.set_value("Job Offer", offer_name, "custom_cova_registered", 1)
+			frappe.db.set_value("Job Offer", offer_name, "cova_registered", 1)
 
 			resp = {
 				"status": "success",
 				"registration": register_result,
 				"test_request": req_doc.name,
 				"test_submission": test_result,
+				"cova_member_id": member_id,
+				"registered": registered,
 			}
+			# Registered, but something downstream of the member did not complete.
+			# Worth reporting without calling the whole row a failure.
+			if registered and register_result.get("error"):
+				resp["warning"] = register_result["error"]
 
 	# ─── 5. RECEIVE VISIT (webhook from COVA) ─────────────────────────
 	elif action == "receive_visit":
@@ -711,10 +844,10 @@ def cova_clinic_api():
 
 			# If this is a pre-employment candidate, lock the Job Offer (one test only)
 			if req.member_type == "Pre Employment" and req.get("nationa_id"):
-				offer_name = frappe.db.get_value("Job Offer", {"custom_national_id": req.nationa_id}, "name")
+				offer_name = frappe.db.get_value("Job Offer", {"national_id": req.nationa_id}, "name")
 				if offer_name:
-					frappe.db.set_value("Job Offer", offer_name, "custom_cova_tested", 1)
-					frappe.db.set_value("Job Offer", offer_name, "custom_linked_test_result", result_doc.name)
+					frappe.db.set_value("Job Offer", offer_name, "cova_tested", 1)
+					frappe.db.set_value("Job Offer", offer_name, "linked_test_result", result_doc.name)
 
 			resp = {
 				"status": "success",
@@ -727,7 +860,10 @@ def cova_clinic_api():
 	# ─── 7. RECEIVE HEALTH REPORT (webhook from COVA) ─────────────────
 	elif action == "receive_health_report":
 		month = data.get("month")
-		posting_date = data.get("date")
+		# Sibling webhooks use camelCase (visitDateTime, clinicalOutcome), so
+		# accept postingDate alongside the original date key rather than
+		# silently filing every report with no posting date.
+		posting_date = data.get("postingDate") or data.get("date")
 		cases = data.get("cases") or []
 
 		if not month or not cases:
@@ -745,9 +881,20 @@ def cova_clinic_api():
 				doc.posting_date = posting_date
 				total = 0
 
+				skipped = []
 				for case in cases:
-					condition = case.get("condition")
+					# receive_test_result names the same thing medicalCase, so take
+					# either spelling.
+					condition = (case.get("condition") or case.get("medicalCase") or "").strip()
 					count = case.get("count") or 0
+
+					# A blank condition used to reach Medical Case as an empty
+					# name, which threw "Case is required" and lost the entire
+					# report — every other entry in it included. Skip the row and
+					# report it instead.
+					if not condition:
+						skipped.append(case)
+						continue
 
 					if not frappe.db.exists("Medical Case", {"cases": condition}):
 						mc = frappe.new_doc("Medical Case")
@@ -758,9 +905,14 @@ def cova_clinic_api():
 					doc.append("medical_cases", {"medical_case": mc_name, "case_count": count})
 					total = total + count
 
-				doc.total_cases = total
-				doc.insert(ignore_permissions=True)
-				resp = {"status": "success", "name": doc.name, "total_cases": total}
+				if not doc.medical_cases:
+					resp = {"error": "no case in the payload named a condition"}
+				else:
+					doc.total_cases = total
+					doc.insert(ignore_permissions=True)
+					resp = {"status": "success", "name": doc.name, "total_cases": total}
+					if skipped:
+						resp["skipped"] = skipped
 
 	# ─── 8. RUN STATUTORY TESTS ───────────────────────────────────────
 	elif action == "run_statutory_tests":
@@ -823,6 +975,7 @@ def cova_clinic_api():
 				created = 0
 				sent = 0
 				failed = 0
+				send_failures = []
 
 				for emp in candidates:
 					req_doc = frappe.new_doc("Clinic Test Request")
@@ -846,11 +999,16 @@ def cova_clinic_api():
 							"scheduledWindow": {"from": today, "to": window_end},
 							"notes": req_doc.notes,
 						}
-						try:
-							make_post_request(base_url + test_request_endpoint, headers=headers, json=payload)
-							sent = sent + 1
-						except Exception:
+						# cova_post never raises, so the outcome has to be read
+						# off the result rather than inferred from "no exception".
+						send_result = cova_post(base_url + test_request_endpoint, headers, payload)
+						if send_result.get("error"):
 							failed = failed + 1
+							send_failures.append(
+								{"employee": emp.get("name"), "request": req_doc.name, "reason": send_result["error"]}
+							)
+						else:
+							sent = sent + 1
 
 				results.append({
 					"package": package,
@@ -859,6 +1017,7 @@ def cova_clinic_api():
 					"created": created,
 					"sent": sent,
 					"failed": failed,
+					"failures": send_failures[:20],
 					"employees": [{"name": e.get("name"), "employee_name": e.get("employee_name")} for e in candidates],
 				})
 
@@ -1074,6 +1233,52 @@ def clinic_disease_report():
 MONTH_LABELS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 
+def clinic_currency():
+	"""The currency clinic costs are denominated in — the default currency of
+	the Company the integration is configured for, falling back to the site
+	default. Returned with the money-bearing dashboards so the page never has
+	to assume one."""
+	from cova_clinic_integration.cova_clinic_integration.doctype.cova_clinic_settings.cova_clinic_settings import (
+		get_clinic_company,
+	)
+
+	company = get_clinic_company()
+	if company:
+		currency = frappe.get_cached_value("Company", company, "default_currency")
+		if currency:
+			return currency
+	return frappe.db.get_default("currency") or ""
+
+
+# A Clinic Visit Cost is "checked in" when a Clinic Checkin exists for the same
+# employee on the same day. The doctype carries two unrelated payloads and
+# either one counts: a door punch (time) or an API-tab record (time_in).
+# Expects the visit table aliased as cv.
+_NO_CHECKIN_CLAUSE = (
+	"NOT EXISTS (SELECT 1 FROM `tabClinic Checkin` cc WHERE cc.employee = cv.employee "
+	"AND (DATE(cc.time) = cv.visit_date OR DATE(cc.time_in) = cv.visit_date))"
+)
+
+
+# What makes a row a door punch rather than a sick note.
+#
+# The two payloads used to be told apart by which employee column was filled.
+# That put the distinction in the wrong place: it is a property of the payload,
+# not of who it belongs to, and a row loaded into the wrong column silently
+# changed meaning. A punch is a row with a punch time; a sick note carries a
+# start and end date instead.
+_PUNCH_CLAUSE = "cc.time IS NOT NULL AND cc.employee IS NOT NULL AND cc.employee != ''"
+
+
+def _desk_form_route(doctype, name):
+	"""Site-relative desk path for a document. Derived from the framework's own
+	helper rather than written out, because the desk prefix is /app before v17
+	and /desk from v17 on — this app runs against both."""
+	from urllib.parse import urlsplit
+
+	return urlsplit(frappe.utils.get_url_to_form(doctype, name)).path
+
+
 def _dashboard_request():
 	"""Parse the shared {year, month} filter body used by every dashboard."""
 	data = frappe.request.get_json() or {}
@@ -1178,10 +1383,13 @@ def _pct(part, whole):
 def clinic_checkin_report():
 	"""Clinic Checkin carries two unrelated payloads on one doctype:
 
-	* **biometric** punches (``b_employee`` / ``log_type`` / ``time``) — the
-	  turnstile-style log used to count how many employees visited the clinic;
-	* **sick-off** records (``employee`` + ``start_date`` + ``end_date``, the
-	  API tab) — the ones whose controller raises a Sick Leave Application.
+	* **biometric** punches (``log_type`` / ``time``) — the turnstile-style log
+	  used to count how many employees visited the clinic;
+	* **sick-off** records (``start_date`` + ``end_date``) — the ones whose
+	  controller raises a Sick Leave Application.
+
+	Both name their person in ``employee``; what tells them apart is the payload
+	each carries, not which column the employee was written into.
 
 	Both are summarised here so the dashboard can present them separately."""
 	assert_health_report_access()
@@ -1194,11 +1402,11 @@ def clinic_checkin_report():
 	range_clauses, range_params = _range_clauses("cc.time", data)
 	bio_clauses.extend(range_clauses)
 	bio_params.update(range_params)
-	bio_clauses.insert(0, "cc.b_employee IS NOT NULL AND cc.b_employee != ''")
+	bio_clauses.insert(0, _PUNCH_CLAUSE)
 	bio_where = _where(bio_clauses)
 
 	bio_totals = frappe.db.sql(
-		"SELECT COUNT(*) AS punches, COUNT(DISTINCT cc.b_employee) AS employees, "
+		"SELECT COUNT(*) AS punches, COUNT(DISTINCT cc.employee) AS employees, "
 		"SUM(CASE WHEN cc.log_type = 'IN' THEN 1 ELSE 0 END) AS in_punches, "
 		"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches, "
 		"COUNT(DISTINCT DATE(cc.time)) AS days "
@@ -1236,16 +1444,16 @@ def clinic_checkin_report():
 			hours_out[int(h)] = int(r.get("out_cnt") or 0)
 
 	bio_top = frappe.db.sql(
-		"SELECT cc.b_employee AS employee, COALESCE(e.employee_name, cc.b_employee) AS employee_name, "
+		"SELECT cc.employee AS employee, COALESCE(e.employee_name, cc.employee) AS employee_name, "
 		"MAX(cc.employee_payroll_number) AS payroll_number, COUNT(*) AS visits, "
 		"SUM(CASE WHEN cc.log_type = 'OUT' THEN 0 ELSE 1 END) AS in_punches, "
 		"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches, "
 		"MIN(CASE WHEN cc.log_type = 'OUT' THEN NULL ELSE cc.time END) AS first_in, "
 		"MAX(CASE WHEN cc.log_type = 'OUT' THEN cc.time ELSE NULL END) AS last_out, "
 		"MAX(cc.time) AS last_visit "
-		"FROM `tabClinic Checkin` cc LEFT JOIN `tabEmployee` e ON e.name = cc.b_employee"
+		"FROM `tabClinic Checkin` cc LEFT JOIN `tabEmployee` e ON e.name = cc.employee"
 		+ bio_where
-		+ " GROUP BY cc.b_employee, e.employee_name"
+		+ " GROUP BY cc.employee, e.employee_name"
 		" ORDER BY visits DESC LIMIT 15",
 		bio_params,
 		as_dict=True,
@@ -1495,6 +1703,26 @@ def clinic_visit_cost_report():
 		r["cost"] = round(float(r.get("cost") or 0), 2)
 		r["last_visit"] = str(r["last_visit"]) if r.get("last_visit") else ""
 
+	# Cost billed on a day the employee never checked in. Worth its own table:
+	# either the checkin never reached us, or the charge is sitting against the
+	# wrong person or the wrong date.
+	no_checkin_costs = frappe.db.sql(
+		"SELECT cv.employee AS employee, "
+		"COALESCE(e.employee_name, cv.full_name, cv.candidate_name, cv.employee) AS employee_name, "
+		"MAX(cv.payroll_number) AS payroll_number, COUNT(*) AS visits, "
+		"COALESCE(SUM(cv.total_cost), 0) AS cost, MAX(cv.visit_date) AS last_visit "
+		"FROM `tabClinic Visit Cost` cv LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
+		+ _where(list(clauses) + ["cv.visit_date IS NOT NULL", _NO_CHECKIN_CLAUSE])
+		+ " GROUP BY cv.employee, e.employee_name, cv.full_name, cv.candidate_name"
+		" ORDER BY cost DESC LIMIT 100",
+		params,
+		as_dict=True,
+	)
+	for r in no_checkin_costs:
+		r["visits"] = int(r.get("visits") or 0)
+		r["cost"] = round(float(r.get("cost") or 0), 2)
+		r["last_visit"] = str(r["last_visit"]) if r.get("last_visit") else ""
+
 	# Cost per employee per month — the spend grid plus the series behind it.
 	matrix_rows = frappe.db.sql(
 		"SELECT cv.employee AS employee, "
@@ -1530,6 +1758,7 @@ def clinic_visit_cost_report():
 	)
 
 	resp = {
+		"currency": clinic_currency(),
 		"kpis": {
 			"visits": visits,
 			"employees": int(totals.get("employees") or 0),
@@ -1553,6 +1782,7 @@ def clinic_visit_cost_report():
 		"by_purpose": by_purpose,
 		"balances": {"months": list(MONTH_LABELS), "series": balance_series},
 		"top_employees": top_employees,
+		"no_checkin_costs": no_checkin_costs,
 		"filter_options": {
 			"years": [str(r.get("yr")) for r in opt_years if r.get("yr")],
 			"months": list(MONTH_LABELS),
@@ -1561,6 +1791,86 @@ def clinic_visit_cost_report():
 	}
 	frappe.response["message"] = resp
 	return resp
+
+
+@frappe.whitelist()
+def employee_visit_breakdown():
+	"""Individual visit records for an employee, from Clinic Visit Cost.
+	Used by the modal breakdown view on the health report dashboard."""
+	assert_health_report_access()
+	employee = frappe.form_dict.get("employee")
+	if not employee:
+		frappe.throw("employee is required")
+
+	data = frappe.request.get_json() or {}
+	clauses = ["cv.employee = %(employee)s"]
+	params = {"employee": employee}
+
+	# The grid this modal opens from is year-scoped, so the breakdown is too.
+	if data.get("year"):
+		clauses.append("YEAR(cv.visit_date) = %(year)s")
+		params["year"] = data["year"]
+
+	# Opened from the no-checkin table: show only the visits that table counted.
+	if frappe.utils.cint(data.get("no_checkin")):
+		clauses.append("cv.visit_date IS NOT NULL")
+		clauses.append(_NO_CHECKIN_CLAUSE)
+
+	# Include date range filters if provided
+	if data.get("from_date"):
+		try:
+			from_date = frappe.utils.getdate(data.get("from_date"))
+			clauses.append("DATE(cv.visit_date) >= %(from_date)s")
+			params["from_date"] = str(from_date)
+		except Exception:
+			pass
+	if data.get("to_date"):
+		try:
+			to_date = frappe.utils.getdate(data.get("to_date"))
+			clauses.append("DATE(cv.visit_date) <= %(to_date)s")
+			params["to_date"] = str(to_date)
+		except Exception:
+			pass
+
+	where = _where(clauses)
+
+	# Fetch individual visit records with their line items. Clinic Visit Cost
+	# carries full_name / candidate_name, never employee_name — the readable
+	# name comes off Employee when the link resolves.
+	visits = frappe.db.sql(
+		"SELECT cv.name, cv.employee, "
+		"COALESCE(e.employee_name, cv.full_name, cv.candidate_name, cv.employee) AS employee_name, "
+		"cv.visit_date, cv.total_cost, cv.payroll_number "
+		"FROM `tabClinic Visit Cost` cv LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
+		+ where
+		+ " ORDER BY cv.visit_date DESC",
+		params,
+		as_dict=True,
+	)
+
+	# The line items in one pass rather than one query per visit — the notes on
+	# a row carry the drug or service name, which is what the panel is for.
+	by_parent = {}
+	if visits:
+		for it in frappe.db.sql(
+			"SELECT li.parent, li.purpose, li.cost, li.notes FROM `tabVisit Line Item` li "
+			"WHERE li.parent IN %(parents)s AND li.parenttype = 'Clinic Visit Cost' "
+			"ORDER BY li.parent, li.idx ASC",
+			{"parents": [v["name"] for v in visits]},
+			as_dict=True,
+		):
+			it["cost"] = round(float(it.get("cost") or 0), 2)
+			by_parent.setdefault(it.pop("parent"), []).append(it)
+
+	for visit in visits:
+		visit["visit_date"] = str(visit["visit_date"]) if visit.get("visit_date") else ""
+		visit["total_cost"] = round(float(visit.get("total_cost") or 0), 2)
+		visit["items"] = by_parent.get(visit["name"], [])
+		visit["route"] = _desk_form_route("Clinic Visit Cost", visit["name"])
+
+	out = {"visits": visits, "currency": clinic_currency()}
+	frappe.response["message"] = out
+	return out
 
 
 @frappe.whitelist()
@@ -1680,6 +1990,109 @@ def clinic_test_request_report():
 	}
 	frappe.response["message"] = resp
 	return resp
+
+
+@frappe.whitelist()
+def test_result_people():
+	"""The people behind one Test Results KPI tile.
+
+	``outcome`` picks the tile: a clinical outcome value, or "employees" for the
+	distinct-employee count, or nothing at all for every result in the period.
+	The period and view filters are applied exactly as the tiles compute them,
+	so the list can never disagree with the number that was clicked."""
+	assert_health_report_access()
+	data, year, month_num = _dashboard_request()
+
+	clauses, params = _period_clauses("ctr.creation", year, month_num)
+	range_clauses, range_params = _range_clauses("ctr.creation", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	for key in ("test_package", "member_type"):
+		if data.get(key):
+			clauses.append(f"ctr.{key} = %({key})s")
+			params[key] = data[key]
+
+	outcome = (data.get("outcome") or "").strip()
+	group_by_employee = outcome == "employees"
+	if outcome and not group_by_employee:
+		clauses.append("ctr.clinical_outcome = %(outcome)s")
+		params["outcome"] = outcome
+	elif data.get("clinical_outcome"):
+		clauses.append("ctr.clinical_outcome = %(clinical_outcome)s")
+		params["clinical_outcome"] = data["clinical_outcome"]
+
+	where = _where(clauses)
+
+	# A pre-employment result belongs to a candidate who has no Employee record
+	# yet — the test was raised from a Job Offer. Nothing on the result itself
+	# names them, so walk out to the request for the National ID and pick the
+	# name up from the member register or the offer it came from. Without this
+	# the row renders with no name at all.
+	joins = (
+		" LEFT JOIN `tabEmployee` e ON e.name = ctr.employee"
+		" LEFT JOIN `tabCova Members` cm ON cm.name = ctr.cova_member"
+		" LEFT JOIN `tabClinic Test Request` tr ON tr.name = ctr.request_id"
+		" LEFT JOIN `tabCova Members` cmn ON cmn.national_id = tr.nationa_id"
+		" LEFT JOIN `tabJob Offer` jo ON jo.national_id = tr.nationa_id"
+		# Last resort for rows whose National ID matches nothing: the request's
+		# own note records where it came from. Both shapes are written by
+		# register_preemployment_candidate, so the format is ours, not guesswork.
+		" LEFT JOIN `tabJob Offer` jon ON tr.notes LIKE 'Pre-employment wellness for Job Offer %%'"
+		" AND jon.name = TRIM(SUBSTRING_INDEX(tr.notes, 'Job Offer ', -1))"
+		" LEFT JOIN `tabJob Applicant` ja ON tr.notes LIKE 'Pre-employment wellness for Job Applicant %%'"
+		" AND ja.name = TRIM(SUBSTRING_INDEX(tr.notes, 'Job Applicant ', -1))"
+	)
+	name = (
+		"COALESCE("
+		"NULLIF(e.employee_name, ''), NULLIF(ctr.full_name, ''), NULLIF(cm.full_name, ''), "
+		"NULLIF(cmn.full_name, ''), NULLIF(jo.applicant_name, ''), "
+		"NULLIF(jon.applicant_name, ''), NULLIF(ja.applicant_name, ''), "
+		"NULLIF(ctr.employee, ''), NULLIF(ctr.cova_member, ''), "
+		# Nothing anywhere names them — show who it is by ID rather than the
+		# record's own code, which reads as a bug to whoever opens the panel.
+		"CONCAT('Candidate ', NULLIF(tr.nationa_id, '')), ctr.name)"
+	)
+	# Candidates have no payroll number; their National ID is the identifier.
+	ident = "COALESCE(NULLIF(ctr.payroll_number, ''), NULLIF(tr.nationa_id, ''))"
+
+	if group_by_employee:
+		# The Employees tile is COUNT(DISTINCT ctr.employee), and COUNT(DISTINCT)
+		# skips NULLs — so a result with no Employee link (a pre-employment one,
+		# carrying only a name) is not in that number and must not be in this
+		# list either, or the panel contradicts the tile that opened it.
+		# Grouped on employee alone for the same reason.
+		rows = frappe.db.sql(
+			f"SELECT ctr.employee AS employee, MAX({name}) AS employee_name, "
+			"MAX(ctr.payroll_number) AS payroll_number, COUNT(*) AS results, "
+			"MAX(ctr.creation) AS received "
+			"FROM `tabClinic Test Result` ctr" + joins
+			+ _where(list(clauses) + ["ctr.employee IS NOT NULL", "ctr.employee != ''"])
+			+ " GROUP BY ctr.employee ORDER BY employee_name ASC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+	else:
+		rows = frappe.db.sql(
+			f"SELECT ctr.name, ctr.employee AS employee, {name} AS employee_name, "
+			f"{ident} AS payroll_number, ctr.member_type, "
+			"ctr.clinical_outcome, ctr.test_package, ctr.creation AS received "
+			"FROM `tabClinic Test Result` ctr" + joins
+			+ where
+			+ " ORDER BY ctr.creation DESC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+
+	for r in rows:
+		r["received"] = str(r["received"])[:10] if r.get("received") else ""
+		if r.get("results") is not None:
+			r["results"] = int(r["results"])
+		if r.get("name"):
+			r["route"] = _desk_form_route("Clinic Test Result", r["name"])
+
+	out = {"rows": rows, "grouped": group_by_employee}
+	frappe.response["message"] = out
+	return out
 
 
 @frappe.whitelist()

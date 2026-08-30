@@ -18,8 +18,8 @@ class ClinicCheckin(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		b_employee: DF.Link | None
-		employee: DF.Link | None
+		cova_member: DF.Link | None
+		employee: DF.Link
 		employee_payroll_number: DF.Data | None
 		end_date: DF.Date | None
 		full_name: DF.Data | None
@@ -125,7 +125,13 @@ class ClinicCheckin(Document):
 
 			leave.insert(ignore_permissions=True)
 			leave.submit()
-			leave.db_set("workflow_state", "Approved by HR")
+			# workflow_state only exists as a column where a Workflow has been
+			# defined on Leave Application. It has been on the live site since
+			# forever, but writing it unconditionally makes this whole block die
+			# with "Unknown column 'workflow_state'" on a site that has none —
+			# taking the leave_balance write and the link-back down with it.
+			if frappe.db.has_column("Leave Application", "workflow_state"):
+				leave.db_set("workflow_state", "Approved by HR")
 			leave.db_set("leave_balance", available_balance)
 
 			self.db_set("leave_application", leave.name)

@@ -3,7 +3,11 @@
 
 import frappe
 
-from cova_clinic_integration.testing import IntegrationTestCase, make_employee
+from cova_clinic_integration.testing import (
+	IntegrationTestCase,
+	ensure_sick_leave_prerequisites,
+	make_employee,
+)
 
 SICK_LEAVE_TYPE = "Sick Leave (Full Pay)"
 
@@ -43,7 +47,7 @@ class TestClinicCheckin(IntegrationTestCase):
 
 	def test_dated_checkin_does_not_raise(self):
 		# The controller wraps leave creation in try/except and only fires when
-		# both dates are present. Where the leave type is absent (as on a bare
+		# both dates are present. Where the prerequisites are absent (as on a bare
 		# dev site) the check-in must still insert cleanly.
 		employee = make_employee("CV-TEST-9012")
 		doc = self._checkin(
@@ -53,10 +57,28 @@ class TestClinicCheckin(IntegrationTestCase):
 			reason="fever",
 		)
 		self.assertTrue(frappe.db.exists("Clinic Checkin", doc.name))
-		if frappe.db.exists("Leave Type", SICK_LEAVE_TYPE):
-			self.assertIsNotNone(doc.leave_application)
-		else:
-			self.assertIsNone(doc.leave_application)
+
+	def test_dated_checkin_creates_an_approved_sick_leave(self):
+		# The happy path: a Leave Type alone is not enough — HRMS also wants a
+		# holiday list and a submitted allocation, which is why this builds the
+		# lot rather than gating on the Leave Type existing.
+		employee = make_employee("CV-TEST-9015")
+		if not ensure_sick_leave_prerequisites(employee, "2026-06-02"):
+			self.skipTest("this site will not allow the sick-leave prerequisites to be built")
+
+		doc = self._checkin(
+			employee=employee,
+			start_date="2026-06-02",
+			end_date="2026-06-03",
+			reason="fever",
+		)
+		self.assertIsNotNone(doc.leave_application, "no Leave Application was created")
+		leave = frappe.get_doc("Leave Application", doc.leave_application)
+		self.assertEqual(leave.leave_type, SICK_LEAVE_TYPE)
+		self.assertEqual(leave.status, "Approved")
+		self.assertEqual(leave.docstatus, 1)
+		self.assertEqual(str(leave.from_date), "2026-06-02")
+		self.assertEqual(str(leave.to_date), "2026-06-03")
 
 	def test_duplicates_are_allowed(self):
 		employee = make_employee("CV-TEST-9013")

@@ -32,6 +32,10 @@ def get_context(context):
 	context.full_width = 1
 	context.title = _("Clinic Analytics")
 
+	# The desk lives at /app before v17 and /desk from v17 on, so the way back
+	# is derived rather than written out.
+	context.desk_url = _desk_url()
+
 	# Who is looking at this. Shown in the rail so it is obvious whose access
 	# the figures are being read under — the page is permission-gated, and the
 	# role that opens it is worth stating.
@@ -48,6 +52,16 @@ def get_context(context):
 		"role_label": ", ".join(roles[:2]) + (f" +{len(roles) - 2}" if len(roles) > 2 else ""),
 	}
 	return context
+
+
+def _desk_url():
+	"""Root of the desk for this Frappe version, as a site-relative path."""
+	from urllib.parse import urlsplit
+
+	# get_url_to_form() with no name returns the doctype's list route; its first
+	# segment is the desk prefix, whichever version this is running on.
+	path = urlsplit(frappe.utils.get_url_to_list("Clinic Visit Cost")).path
+	return "/" + path.strip("/").split("/")[0]
 
 
 def _initials(name):

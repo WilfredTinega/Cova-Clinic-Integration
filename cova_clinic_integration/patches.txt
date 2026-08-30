@@ -6,3 +6,5 @@
 # Patches added in this section will be executed after doctypes are migrated
 cova_clinic_integration.patches.move_cova_fields_to_job_offer
 cova_clinic_integration.patches.link_existing_records_to_cova_members
+cova_clinic_integration.patches.rename_cova_job_offer_fields
+cova_clinic_integration.patches.merge_checkin_employee_fields

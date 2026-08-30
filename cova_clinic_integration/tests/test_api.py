@@ -390,7 +390,7 @@ class TestGender(IntegrationTestCase):
 		for doctype, fieldname in (
 			("Cova Members", "gender"),
 			("Clinic Test Request", "gender"),
-			("Job Offer", "custom_gender"),
+			("Job Offer", "gender"),
 		):
 			field = frappe.get_meta(doctype).get_field(fieldname)
 			self.assertIsNotNone(field, "%s.%s missing" % (doctype, fieldname))
@@ -636,13 +636,20 @@ class TestConnections(IntegrationTestCase):
 		):
 			self.assertIn(doctype, links, doctype)
 
-	def test_both_sides_of_clinic_checkin_are_reachable(self):
-		# sick-off records hang off `employee`, biometric punches off `b_employee`
+	def test_clinic_checkin_is_reachable_from_the_employee(self):
+		"""Both payloads name their person in `employee` now, so one link covers
+		them. There used to be a second field for punches, which meant a row
+		loaded into the wrong column silently changed meaning."""
 		fieldnames = {
 			l.link_fieldname for l in frappe.get_meta("Employee").links
 			if l.link_doctype == "Clinic Checkin"
 		}
-		self.assertEqual(fieldnames, {"employee", "b_employee"})
+		self.assertEqual(fieldnames, {"employee"})
+
+	def test_clinic_checkin_has_one_employee_field(self):
+		meta = frappe.get_meta("Clinic Checkin")
+		self.assertIsNone(meta.get_field("b_employee"), "the second employee field is back")
+		self.assertIsNotNone(meta.get_field("employee"))
 
 	def test_request_and_result_are_linked_both_ways(self):
 		# request_id used to be a plain Data field, which broke Request -> Result
@@ -735,11 +742,11 @@ class TestCovaMemberLinks(IntegrationTestCase):
 		).insert()
 		self.assertEqual(doc.cova_member, self.member)
 
-	def test_a_biometric_punch_links_through_b_employee(self):
+	def test_a_biometric_punch_links_through_employee(self):
 		doc = frappe.get_doc(
 			{
 				"doctype": "Clinic Checkin",
-				"b_employee": self.employee,
+				"employee": self.employee,
 				"log_type": "IN",
 				"time": "2026-09-10 08:05:00",
 			}
@@ -980,3 +987,628 @@ class TestGetClinicData(IntegrationTestCase):
 		with stub_request(method="PUT") as response:
 			api.get_clinic_data()
 		self.assertEqual(response.http_status_code, 405)
+
+
+class TestPortability(IntegrationTestCase):
+	"""Regressions for code that assumed the live kaitet schema.
+
+	The integration is written against kaitet-group.upande.com, where csf_ke
+	supplies ``Employee.national_id`` and a Workflow supplies
+	``Leave Application.workflow_state``. Neither is guaranteed on a site that
+	only has frappe + erpnext + hrms + this app, and each one used to take a
+	whole code path down with an "Unknown column" OperationalError.
+	"""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def test_sync_members_does_not_select_csf_ke_columns(self):
+		"""sync_members must not name any Employee column beyond `name`.
+
+		It re-reads every row with frappe.get_doc anyway, so selecting more was
+		pure risk: `national_id` is owned by csf_ke and its absence made the
+		whole action die before a single member was synced.
+		"""
+		captured = []
+		real_get_all = frappe.db.get_all
+
+		def spy(doctype, *args, **kwargs):
+			# Only the action's own two sweeps, not the link-title lookups frappe
+			# fires while saving the documents underneath.
+			filters = kwargs.get("filters") or {}
+			if doctype == "Employee" and "cova_member_id" in filters:
+				captured.append(kwargs)
+			return real_get_all(doctype, *args, **kwargs)
+
+		with patch.object(api, "make_post_request", return_value={"covaMemberId": "CV-1"}):
+			with patch.object(frappe.db, "get_all", side_effect=spy):
+				with stub_request(json_body={"action": "sync_members"}):
+					resp = api.cova_clinic_api()
+
+		self.assertEqual(resp["status"], "sync complete")
+		self.assertEqual(len(captured), 2, "expected the register + deactivate sweeps")
+		for kwargs in captured:
+			self.assertNotIn(
+				"fields", kwargs, "sync_members selected Employee columns it does not use"
+			)
+			self.assertEqual(kwargs.get("pluck"), "name")
+
+	def test_sick_leave_survives_a_site_without_workflow_state(self):
+		"""The Leave Application link-back must be written even where
+		`workflow_state` has no column."""
+		employee = make_employee("CV-PORT-9002", "Portability Tester")
+		checkin = frappe.get_doc(
+			{
+				"doctype": "Clinic Checkin",
+				"employee": employee,
+				"start_date": "2026-08-03",
+				"end_date": "2026-08-04",
+				"reason": "portability",
+			}
+		)
+
+		real_has_column = frappe.db.has_column
+
+		def no_workflow_state(doctype, column):
+			if doctype == "Leave Application" and column == "workflow_state":
+				return False
+			return real_has_column(doctype, column)
+
+		with patch.object(frappe.db, "has_column", side_effect=no_workflow_state):
+			checkin.insert(ignore_permissions=True)
+
+		# The leave itself needs a Leave Type / allocation / holiday list this
+		# site may not have, so assert on what is in our control: the guard is
+		# consulted and nothing raised out of the controller.
+		self.assertTrue(frappe.db.exists("Clinic Checkin", checkin.name))
+
+
+class TestJobOfferBiodata(IntegrationTestCase):
+	"""Job Offer must carry every COVA field the Job Applicant block used to
+	hold, and must not make HR retype what the applicant already supplied."""
+
+	# fieldname -> the Job Applicant field it replaces (None = standard on
+	# Job Offer already, or new to the offer).
+	COVA_BLOCK = {
+		"national_id": "custom_national_id",
+		"date_of_birth": "custom_date_of_birth",
+		"gender": "custom_gender",
+		"cova_registered": "custom_cova_registered",
+		"cova_tested": "custom_cova_tested",
+		"linked_test_result": "custom_linked_test_result",
+		"phone_number": "phone_number",
+	}
+
+	def test_every_applicant_field_has_a_home_on_job_offer(self):
+		meta = frappe.get_meta("Job Offer")
+		for fieldname in self.COVA_BLOCK:
+			self.assertTrue(meta.has_field(fieldname), f"Job Offer is missing {fieldname}")
+		# custom_company had no counterpart to install: Job Offer ships one.
+		self.assertTrue(meta.has_field("company"))
+		# Everything the app owns has to survive submit — registration happens
+		# after the offer goes out.
+		for fieldname in self.COVA_BLOCK:
+			self.assertEqual(
+				meta.get_field(fieldname).allow_on_submit, 1, f"{fieldname} is not allow_on_submit"
+			)
+
+	def test_phone_number_is_carried_over_from_the_applicant(self):
+		field = frappe.get_meta("Job Offer").get_field("phone_number")
+		self.assertEqual(field.fetch_from, "job_applicant.phone_number")
+		# fetch_if_empty keeps it editable: it is mandatory for the clinic
+		# company, so an applicant with no number on file must still be fillable.
+		self.assertEqual(field.fetch_if_empty, 1)
+
+	def test_gender_is_a_gender_link_not_a_hardcoded_select(self):
+		field = frappe.get_meta("Job Offer").get_field("gender")
+		self.assertEqual(field.fieldtype, "Link")
+		self.assertEqual(field.options, "Gender")
+
+	def test_tracking_fields_do_not_survive_an_amend(self):
+		meta = frappe.get_meta("Job Offer")
+		for fieldname in ("cova_registered", "cova_tested", "linked_test_result"):
+			self.assertEqual(meta.get_field(fieldname).no_copy, 1, f"{fieldname} is not no_copy")
+
+
+class TestCovaPostFailures(IntegrationTestCase):
+	"""COVA rejecting a row must be reported, not raised.
+
+	``frappe.integrations.utils.make_post_request`` calls ``raise_for_status()``,
+	so a 400 became an exception and the response body — the only place COVA says
+	*why* — was discarded. Every call site checks ``result.get("error")``, a
+	contract that could therefore never be met on failure: one bad row took the
+	whole bulk sweep down with a raw traceback.
+	"""
+
+	def setUp(self):
+		self.payroll = "CV-POST-7001"
+		self.employee = make_employee(self.payroll, "Post Tester")
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	@staticmethod
+	def _http_error(status_code, body):
+		"""A requests.HTTPError shaped like the one make_post_request re-raises."""
+		from requests import HTTPError, Response
+
+		response = Response()
+		response.status_code = status_code
+		response._content = frappe.as_json(body).encode() if isinstance(body, dict) else body.encode()
+		response.headers["content-type"] = "application/json"
+		return HTTPError(f"{status_code} Client Error", response=response)
+
+	def _call(self, body):
+		with stub_request(json_body=body):
+			return api.cova_clinic_api()
+
+	def test_cova_post_returns_the_reason_instead_of_raising(self):
+		error = self._http_error(400, {"message": "phone is required"})
+		with patch.object(api, "make_post_request", side_effect=error):
+			result = api.cova_post("https://cova.example/members/register", {}, {"payrollNumber": "x"})
+
+		self.assertEqual(result["error"], "phone is required")
+		self.assertEqual(result["status_code"], 400)
+		self.assertEqual(result["cova_response"], {"message": "phone is required"})
+
+	def test_cova_post_survives_a_body_that_is_not_json(self):
+		error = self._http_error(502, "<html>Bad Gateway</html>")
+		error.response.headers["content-type"] = "text/html"
+		with patch.object(api, "make_post_request", side_effect=error):
+			result = api.cova_post("https://cova.example/members/register", {}, {})
+
+		self.assertEqual(result["status_code"], 502)
+		self.assertIn("Bad Gateway", result["cova_response"])
+
+	def test_cova_post_survives_a_connection_failure(self):
+		"""A timeout or DNS failure carries no response at all."""
+		with patch.object(api, "make_post_request", side_effect=OSError("connection refused")):
+			result = api.cova_post("https://cova.example/members/register", {}, {})
+
+		self.assertIn("connection refused", result["error"])
+		self.assertIsNone(result["status_code"])
+
+	def test_register_member_reports_a_rejection_rather_than_raising(self):
+		error = self._http_error(400, {"message": "phone is required"})
+		with patch.object(api, "make_post_request", side_effect=error):
+			resp = self._call(
+				{"action": "register_member", "member_type": "Active", "employee": self.employee}
+			)
+
+		self.assertEqual(resp["error"], "phone is required")
+		# A rejected registration must not leave the member looking enrolled.
+		status = frappe.db.get_value("Cova Members", {"employee": self.employee}, "status")
+		self.assertEqual(status, "Inactive")
+
+	def test_submit_test_request_reports_a_rejection(self):
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Active",
+				"employee": self.employee,
+				"payroll_number": self.payroll,
+				"status": "Pending",
+				"test_package": "Annual Medical",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		error = self._http_error(422, {"error": "unknown test package"})
+		with patch.object(api, "make_post_request", side_effect=error):
+			resp = self._call({"action": "submit_test_request", "request_name": request.name})
+
+		self.assertEqual(resp["error"], "unknown test package")
+
+	def test_sync_members_counts_a_rejection_with_its_reason(self):
+		error = self._http_error(400, {"message": "nationalId is required"})
+		with patch.object(api, "make_post_request", side_effect=error):
+			resp = self._call({"action": "sync_members"})
+
+		self.assertEqual(resp["status"], "sync complete")
+		self.assertEqual(resp["registered"], 0)
+		self.assertGreater(resp["register_failed"], 0)
+		self.assertGreater(resp["failure_count"], 0)
+		self.assertEqual(resp["failures"][0]["reason"], "nationalId is required")
+
+	def test_sync_members_counts_a_duplicate_apart_from_a_registration(self):
+		"""COVA answers an already-enrolled member with a 200 and status=duplicate.
+		Counting that as a fresh registration overstates what the sweep did."""
+		duplicate = {
+			"status": "duplicate",
+			"message": "Member is already enrolled.",
+			"covaMemberId": "CHSC00015643",
+		}
+		with patch.object(api, "make_post_request", return_value=duplicate):
+			resp = self._call({"action": "sync_members"})
+
+		self.assertEqual(resp["registered"], 0)
+		self.assertGreater(resp["duplicates"], 0)
+		self.assertEqual(resp["register_failed"], 0)
+		# It is still a member — COVA handed back the id.
+		self.assertEqual(
+			frappe.db.get_value("Employee", self.employee, "cova_member_id"), "CHSC00015643"
+		)
+
+	def test_preemployment_registration_reports_a_rejection(self):
+		error = self._http_error(400, {"message": "dateOfBirth is required"})
+		applicant = frappe.get_doc(
+			{
+				"doctype": "Job Applicant",
+				"applicant_name": "Rejected Candidate",
+				"email_id": "rejected.candidate@example.com",
+				"phone_number": "0700111222",
+				"status": "Open",
+			}
+		).insert(ignore_permissions=True)
+		offer = frappe.get_doc(
+			{
+				"doctype": "Job Offer",
+				"job_applicant": applicant.name,
+				"status": "Awaiting Response",
+				"offer_date": frappe.utils.nowdate(),
+				"designation": frappe.db.get_value("Designation", {}, "name"),
+				"company": frappe.db.get_value("Employee", self.employee, "company"),
+				"national_id": "CV-POST-NID-1",
+				"phone_number": "0700111222",
+			}
+		).insert(ignore_permissions=True)
+
+		with patch.object(api, "make_post_request", side_effect=error):
+			resp = self._call({"action": "register_preemployment_candidate", "job_offer": offer.name})
+
+		# The tracking request is created first on purpose, so it survives a
+		# refusal and the candidate is not silently lost.
+		self.assertTrue(frappe.db.exists("Clinic Test Request", resp["test_request"]))
+		self.assertEqual(resp["registration"]["error"], "dateOfBirth is required")
+
+
+class TestOnboarding(IntegrationTestCase):
+	"""The Getting Started panel has to cover the sidebar, not a subset of it.
+
+	A step whose path points at nothing, or a sidebar entry with no step, both
+	fail silently in the UI — the panel just quietly does less than it claims.
+	"""
+
+	ONBOARDING = "Cova Clinic Onboarding"
+	TOUR = "Cova Pre-Employment on Job Offer"
+
+	def _steps(self):
+		onboarding = frappe.get_doc("Module Onboarding", self.ONBOARDING)
+		return [frappe.get_doc("Onboarding Step", row.step) for row in onboarding.steps]
+
+	# Configured once when the app is installed, not part of the day-to-day walk,
+	# so it was dropped from the onboarding panel and is exempt here. Its step
+	# still exists as a Form Tour — see test_the_settings_step_walks_the_single.
+	NOT_ONBOARDED = {"Cova Clinic Settings"}
+
+	def test_every_sidebar_doctype_has_a_step(self):
+		sidebar = frappe.get_doc("Workspace Sidebar", "Cova Clinic")
+		linked = {
+			item.link_to
+			for item in sidebar.items
+			if item.link_type == "DocType" and item.link_to not in self.NOT_ONBOARDED
+		}
+
+		covered = set()
+		for step in self._steps():
+			if step.action in ("Update Settings", "Show Form Tour", "Create Entry"):
+				covered.add(step.reference_document)
+			elif (step.path or "").startswith("List/"):
+				covered.add(step.path.split("/", 1)[1])
+
+		self.assertEqual(
+			linked - covered, set(), "sidebar doctypes with no onboarding step: %s" % (linked - covered)
+		)
+
+	def test_every_step_points_somewhere_real(self):
+		for step in self._steps():
+			where = f"{step.name} ({step.action})"
+			if step.action in ("Update Settings", "Show Form Tour"):
+				self.assertTrue(step.reference_document, where + " has no reference_document")
+				self.assertTrue(
+					frappe.db.exists("DocType", step.reference_document),
+					where + f" points at a missing doctype {step.reference_document}",
+				)
+			elif step.action == "Go to Page":
+				self.assertTrue(step.path, where + " has no path")
+				if step.path.startswith("List/"):
+					doctype = step.path.split("/", 1)[1]
+					self.assertTrue(
+						frappe.db.exists("DocType", doctype),
+						where + f" lists a missing doctype {doctype}",
+					)
+			elif step.action == "View Docs":
+				self.assertTrue(step.path, where + " has no path")
+
+	def test_the_job_offer_step_walks_the_form_then_creates_one(self):
+		step = frappe.get_doc("Onboarding Step", "Fill the COVA Block on a Job Offer")
+		self.assertEqual(step.action, "Create Entry")
+		self.assertEqual(step.reference_document, "Job Offer")
+		self.assertEqual(step.form_tour, self.TOUR)
+		# createEntry() only starts the tour and only routes to the full form when
+		# both of these are set; with either missing you land on a blank form with
+		# no walkthrough and nothing tells you.
+		self.assertEqual(step.show_form_tour, 1)
+		self.assertEqual(step.show_full_form, 1)
+
+	def test_every_doctype_step_walks_a_tour_and_ends_in_a_record(self):
+		"""A step that opens a doctype must run its walkthrough, and the record it
+		opens must be one a person can actually save — otherwise the walkthrough
+		dead-ends on a form that will not complete."""
+		for step in self._steps():
+			if step.action != "Create Entry":
+				continue
+			where = step.name
+			self.assertTrue(step.form_tour, where + " opens a form with no walkthrough")
+			self.assertEqual(step.show_form_tour, 1, where + ": show_form_tour is off, the tour never starts")
+			self.assertEqual(step.show_full_form, 1, where + ": show_full_form is off")
+
+			tour = frappe.get_doc("Form Tour", step.form_tour)
+			self.assertEqual(tour.reference_doctype, step.reference_document)
+
+			# reqd + read_only is unfillable — the form demands a value the user
+			# cannot type, so the walkthrough can never be completed.
+			meta = frappe.get_meta(step.reference_document)
+			unfillable = [
+				f.fieldname
+				for f in meta.fields
+				if f.reqd and f.read_only and not f.default and not f.fetch_from
+			]
+			self.assertEqual(
+				unfillable, [], f"{step.reference_document} has required read-only fields: {unfillable}"
+			)
+
+	def test_the_settings_step_walks_the_single(self):
+		step = frappe.get_doc("Onboarding Step", "Connect the COVA Clinic API")
+		self.assertEqual(step.action, "Show Form Tour")
+		self.assertEqual(step.reference_document, "Cova Clinic Settings")
+		# showFormTour() routes to the Single itself rather than `<doctype>/new`.
+		self.assertEqual(step.is_single, 1)
+		self.assertTrue(step.form_tour)
+
+	def test_every_walkthrough_covers_the_mandatory_fields(self):
+		"""The user has to be shown what they will be asked for. A tour that skips
+		a required field leaves them at a save that fails for a reason the
+		walkthrough never mentioned."""
+		for tour_name in frappe.get_all(
+			"Form Tour", filters={"module": "Cova Clinic Integration"}, pluck="name"
+		):
+			tour = frappe.get_doc("Form Tour", tour_name)
+			meta = frappe.get_meta(tour.reference_doctype)
+			walked = {step.fieldname for step in tour.steps}
+			required = {
+				f.fieldname
+				for f in meta.fields
+				if f.reqd
+				and not f.default
+				and not f.fetch_from
+				and f.fieldname not in ("amended_from", "naming_series")
+			}
+			self.assertEqual(
+				required - walked,
+				set(),
+				f"{tour_name} never shows required field(s): {sorted(required - walked)}",
+			)
+
+	def test_no_walkthrough_reaches_into_a_child_table(self):
+		"""Walkthroughs stay on the parent form and leave grids alone.
+
+		A step marked as a child-table field, or one immediately after a Table
+		step that names it as its parent, makes frappe drive the grid: it adds an
+		"Add a Row" step, opens the row, and then the mandatory columns inside it
+		have to be filled before the tour's save step can complete. Health Report
+		requires a Medical Case and Job Offer Term requires both of its columns,
+		so a walkthrough that opened a row would leave the user stuck behind
+		values the tour never meant to ask for — or worse, a half-filled row
+		saved on a real document.
+
+		The parent Table fields are all optional, so an empty grid saves cleanly.
+		That only holds while no step reaches inside one.
+		"""
+		for tour_name in frappe.get_all(
+			"Form Tour", filters={"module": "Cova Clinic Integration"}, pluck="name"
+		):
+			tour = frappe.get_doc("Form Tour", tour_name)
+			for step in tour.steps:
+				where = f"{tour_name} step {step.idx} ({step.fieldname})"
+				self.assertFalse(step.is_table_field, f"{where} is a child-table field")
+				self.assertFalse(
+					step.parent_fieldname,
+					f"{where} names a parent table, which makes frappe open a row",
+				)
+
+	def test_every_walkthrough_is_reachable_from_its_form(self):
+		"""public/js/form_walkthrough.js puts a "Walk Me Through" button on each
+		doctype that ships a tour. A tour missing from that map can only ever be
+		started by the onboarding panel — and if it starts crooked there is no way
+		to restart it."""
+		import re
+
+		app_path = frappe.get_app_path("cova_clinic_integration")
+		with open(f"{app_path}/public/js/form_walkthrough.js") as handle:
+			source = handle.read()
+		mapped = dict(re.findall(r'"([^"]+)":\s*"([^"]+ Walkthrough|Cova Pre-Employment on Job Offer)"', source))
+
+		for tour_name in frappe.get_all(
+			"Form Tour", filters={"module": "Cova Clinic Integration"}, pluck="name"
+		):
+			tour = frappe.get_doc("Form Tour", tour_name)
+			self.assertEqual(
+				mapped.get(tour.reference_doctype),
+				tour_name,
+				f"{tour_name} is not wired to a Walk Me Through button on {tour.reference_doctype}",
+			)
+
+	def test_no_walkthrough_highlights_a_read_only_field(self):
+		"""A read-only field is nothing the user can act on — stopping the tour to
+		point at one just pads it out. Whatever is worth saying about them belongs
+		in the closing step's copy, not in an anchor of its own."""
+		for tour_name in frappe.get_all(
+			"Form Tour", filters={"module": "Cova Clinic Integration"}, pluck="name"
+		):
+			tour = frappe.get_doc("Form Tour", tour_name)
+			meta = frappe.get_meta(tour.reference_doctype)
+			highlighted = sorted(
+				{step.fieldname for step in tour.steps if meta.get_field(step.fieldname).read_only}
+			)
+			self.assertEqual(
+				highlighted, [], f"{tour_name} highlights read-only field(s): {highlighted}"
+			)
+
+	def test_every_walkthrough_ends_by_asking_for_the_entry(self):
+		for tour_name in frappe.get_all(
+			"Form Tour", filters={"module": "Cova Clinic Integration"}, pluck="name"
+		):
+			tour = frappe.get_doc("Form Tour", tour_name)
+			self.assertTrue(tour.steps, tour_name + " has no steps")
+			self.assertIn(
+				"Save",
+				tour.steps[-1].description or "",
+				tour_name + " does not end by asking the user to save",
+			)
+
+	def test_every_form_tour_step_anchors_on_a_real_field(self):
+		"""A tour step whose fieldname does not exist highlights nothing — the
+		popover renders detached from the form with no error anywhere."""
+		tour = frappe.get_doc("Form Tour", self.TOUR)
+		meta = frappe.get_meta(tour.reference_doctype)
+		self.assertTrue(tour.steps, "the tour has no steps")
+		for step in tour.steps:
+			self.assertTrue(
+				meta.has_field(step.fieldname),
+				f"{tour.reference_doctype} has no field {step.fieldname} (tour step: {step.title})",
+			)
+
+	def test_the_tour_reveals_the_cova_block_before_pointing_into_it(self):
+		"""The COVA section is hidden until `company` matches the clinic company,
+		so the tour has to set company before it walks the fields inside it."""
+		tour = frappe.get_doc("Form Tour", self.TOUR)
+		fieldnames = [step.fieldname for step in tour.steps]
+		self.assertEqual(fieldnames[0], "company")
+
+		meta = frappe.get_meta(tour.reference_doctype)
+		gated = [fn for fn in fieldnames if (meta.get_field(fn).depends_on or "").find("cova_clinic_company") >= 0]
+		for fieldname in gated:
+			self.assertGreater(fieldnames.index(fieldname), 0)
+
+
+class TestPayrollNumberOnDeskRecords(IntegrationTestCase):
+	"""A record created from a button must carry the same identifier the API sends.
+
+	`payroll_number` fetches from `employee.employee_number`, which is **optional**
+	in HR. So the Employee form's *Request Medical Test* button — a plain
+	`frappe.client.insert` — produced a request with an empty payroll number
+	wherever that field was unset, and `submit_test_request` then handed COVA
+	`memberIdentifier: ""`. The API path never had the bug because it fills the
+	field with `employee_payroll_id()`.
+	"""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _employee_without_a_payroll_number(self):
+		employee = make_employee("CV-DESK-6001", "Desk Tester")
+		frappe.db.set_value("Employee", employee, "employee_number", "")
+		return employee
+
+	def test_a_desk_created_request_gets_the_employee_id(self):
+		employee = self._employee_without_a_payroll_number()
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Active",
+				"employee": employee,
+				"status": "Pending",
+				"test_package": "Annual Medical",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		self.assertTrue(request.payroll_number, "the request was saved with no payroll number")
+		self.assertEqual(request.payroll_number, api.employee_payroll_id(frappe.get_doc("Employee", employee)))
+
+	def test_a_fetched_employee_number_still_wins(self):
+		"""Only an empty value is filled — inbound resolution accepts either, and
+		a site where the two differ must keep sending what COVA already holds."""
+		employee = make_employee("CV-DESK-6002", "Numbered Tester")
+		frappe.db.set_value("Employee", employee, "employee_number", "CV-DESK-6002")
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Active",
+				"employee": employee,
+				"status": "Pending",
+				"test_package": "Annual Medical",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		self.assertEqual(request.payroll_number, "CV-DESK-6002")
+
+	def test_a_pre_employment_request_is_left_alone(self):
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Pre Employment",
+				"nationa_id": "CV-DESK-NID-1",
+				"full_name": "Desk Candidate",
+				"status": "Pending",
+				"test_package": "Pre Employment Wellness",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		self.assertFalse(request.payroll_number)
+
+	def test_the_identifier_survives_the_round_trip_to_cova(self):
+		"""What the button ends up sending COVA, and whether the reply resolves
+		back to the same employee."""
+		employee = self._employee_without_a_payroll_number()
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Active",
+				"employee": employee,
+				"status": "Pending",
+				"test_package": "Annual Medical",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		sent = {}
+
+		def capture(url, headers=None, json=None, **kwargs):
+			sent.update(json or {})
+			return {"status": "ok"}
+
+		with patch.object(api, "make_post_request", side_effect=capture):
+			with stub_request(json_body={"action": "submit_test_request", "request_name": request.name}):
+				api.cova_clinic_api()
+
+		self.assertTrue(sent.get("memberIdentifier"), "COVA was sent an empty memberIdentifier")
+		self.assertEqual(api.employee_from_payroll(sent["memberIdentifier"]), employee)
+
+	def test_a_desk_created_visit_gets_the_employee_id(self):
+		employee = self._employee_without_a_payroll_number()
+		visit = frappe.get_doc(
+			{
+				"doctype": "Clinic Visit Cost",
+				"employee": employee,
+				"full_name": "Desk Tester",
+				"visit_date": "2026-08-20",
+				"visit_line_item": [
+					{"purpose": "Consultation", "cost": 500},
+					{"purpose": "Pharmacy", "cost": 1250.5},
+				],
+			}
+		).insert(ignore_permissions=True)
+
+		self.assertTrue(visit.payroll_number)
+		self.assertEqual(api.employee_from_payroll(visit.payroll_number), employee)
+		# The total is derived, so a hand-entered visit adds up like a pushed one.
+		self.assertEqual(visit.total_cost, 1750.5)

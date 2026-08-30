@@ -30,6 +30,8 @@ __all__ = ["IntegrationTestCase"]
 import contextlib
 
 import frappe
+from werkzeug.test import EnvironBuilder
+from werkzeug.wrappers import Request
 
 HR_ROLE = "HR Manager"
 
@@ -80,21 +82,35 @@ def make_employee(payroll_number: str, employee_name: str = "Cova Test") -> str:
 	return doc.name
 
 
-class _RequestStub:
-	"""Minimal stand-in for the werkzeug request the endpoints read.
+class _RequestStub(Request):
+	"""A real werkzeug request, with the JSON body handed over directly.
 
 	``frappe.request`` is a LocalProxy over ``frappe.local.request``, so swapping
-	that attribute is enough to drive the endpoints straight from a test.
+	that attribute is enough to drive the endpoints straight from a test. It has
+	to be a *real* request rather than a hand-rolled object: anything the
+	endpoint touches downstream may reach for ``host``/``headers``/``cookies``
+	(frappe.utils.get_url() does, and so any HRMS validation message carrying a
+	document link does), and a stub missing one of those replaces the real error
+	with an AttributeError.
 	"""
 
-	def __init__(self, json_body=None, method="POST", args=None, content_type="application/json"):
-		self._json = json_body
-		self.method = method
-		self.args = frappe._dict(args or {})
-		self.content_type = content_type
+	_stub_json = None
 
 	def get_json(self, *a, **kw):
-		return self._json
+		return self._stub_json
+
+
+def _make_request(json_body=None, method="POST", args=None, content_type="application/json"):
+	builder = EnvironBuilder(
+		method=method,
+		path="/api/method/cova_test",
+		query_string={k: str(v) for k, v in (args or {}).items()},
+		headers={"Host": frappe.local.site or "localhost"},
+		content_type=content_type,
+	)
+	request = _RequestStub(builder.get_environ())
+	request._stub_json = json_body
+	return request
 
 
 @contextlib.contextmanager
@@ -103,7 +119,7 @@ def stub_request(json_body=None, method="POST", args=None, content_type="applica
 	saved_request = getattr(frappe.local, "request", None)
 	saved_form = getattr(frappe.local, "form_dict", None)
 	saved_response = getattr(frappe.local, "response", None)
-	frappe.local.request = _RequestStub(json_body, method, args, content_type)
+	frappe.local.request = _make_request(json_body, method, args, content_type)
 	if form is not None:
 		frappe.local.form_dict = frappe._dict(form)
 	frappe.local.response = frappe._dict()
@@ -115,3 +131,87 @@ def stub_request(json_body=None, method="POST", args=None, content_type="applica
 			frappe.local.form_dict = saved_form
 		if saved_response is not None:
 			frappe.local.response = saved_response
+
+
+SICK_LEAVE_TYPE = "Sick Leave (Full Pay)"
+
+
+def ensure_sick_leave_prerequisites(employee: str, on_date: str) -> bool:
+	"""Put everything a Sick Leave Application needs on the site for ``employee``.
+
+	Clinic Checkin auto-creates an approved Sick Leave, but HRMS will only let it
+	through with a Leave Type, a holiday list the employee resolves to, and a
+	submitted Leave Allocation covering the date. The live site has all three;
+	a bare dev/CI site has none, and the controller then (correctly) swallows the
+	failure — which leaves the happy path untested.
+
+	Returns True if the prerequisites are in place, False if this site would not
+	let them be built. Everything created here is inside the test transaction.
+	"""
+	try:
+		if not frappe.db.exists("Leave Type", SICK_LEAVE_TYPE):
+			frappe.get_doc(
+				{
+					"doctype": "Leave Type",
+					"leave_type_name": SICK_LEAVE_TYPE,
+					"max_leaves_allowed": 30,
+				}
+			).insert(ignore_permissions=True)
+
+		company = frappe.db.get_value("Employee", employee, "company")
+		year = str(frappe.utils.getdate(on_date).year)
+		holiday_list = f"Cova Test {year}"
+		if not frappe.db.exists("Holiday List", holiday_list):
+			doc = frappe.get_doc(
+				{
+					"doctype": "Holiday List",
+					"holiday_list_name": holiday_list,
+					"from_date": f"{year}-01-01",
+					"to_date": f"{year}-12-31",
+					"weekly_off": "Sunday",
+				}
+			)
+			doc.get_weekly_off_dates()
+			doc.insert(ignore_permissions=True)
+
+		# Newer HRMS resolves the holiday list through Holiday List Assignment
+		# rather than the fields on Company / Employee.
+		if frappe.db.exists("DocType", "Holiday List Assignment"):
+			if not frappe.db.exists(
+				"Holiday List Assignment", {"assigned_to": company, "docstatus": 1}
+			):
+				assignment = frappe.get_doc(
+					{
+						"doctype": "Holiday List Assignment",
+						"applicable_for": "Company",
+						"assigned_to": company,
+						"holiday_list": holiday_list,
+						"from_date": f"{year}-01-01",
+					}
+				)
+				assignment.insert(ignore_permissions=True)
+				assignment.submit()
+		else:
+			frappe.db.set_value("Company", company, "default_holiday_list", holiday_list)
+			frappe.db.set_value("Employee", employee, "holiday_list", holiday_list)
+
+		if not frappe.db.exists(
+			"Leave Allocation",
+			{"employee": employee, "leave_type": SICK_LEAVE_TYPE, "docstatus": 1},
+		):
+			allocation = frappe.get_doc(
+				{
+					"doctype": "Leave Allocation",
+					"employee": employee,
+					"leave_type": SICK_LEAVE_TYPE,
+					"from_date": f"{year}-01-01",
+					"to_date": f"{year}-12-31",
+					"new_leaves_allocated": 30,
+				}
+			)
+			allocation.insert(ignore_permissions=True)
+			allocation.submit()
+		return True
+	except Exception:
+		frappe.log_error(title="COVA sick leave prerequisites", message=frappe.get_traceback())
+		return False

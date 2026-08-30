@@ -32,14 +32,13 @@ def resolve_cova_member(employee: str | None = None, national_id: str | None = N
 def set_cova_member(doc) -> None:
 	"""Fill ``cova_member`` if it is empty, leaving any manual value alone.
 
-	The keys differ per doctype: a check-in may identify its employee through
-	``b_employee`` (biometric punches) rather than ``employee``, and a
-	pre-employment request has a national id and no Employee at all.
+	The keys differ per doctype: a pre-employment request has a national id and
+	no Employee at all.
 	"""
 	if doc.get("cova_member"):
 		return
 
-	employee = doc.get("employee") or doc.get("b_employee")
+	employee = doc.get("employee")
 	national_id = doc.get("nationa_id")  # spelling matches the doctype
 
 	# A result carries neither on a pre-employment candidate; its request does.
@@ -75,8 +74,6 @@ def backfill_member_links(member_name: str, employee: str | None = None, nationa
 		or_filters = {}
 		if employee:
 			or_filters[employee_field] = employee
-			if doctype == "Clinic Checkin":
-				or_filters["b_employee"] = employee
 		if national_id and frappe.get_meta(doctype).get_field("nationa_id"):
 			or_filters["nationa_id"] = national_id
 		if not or_filters:

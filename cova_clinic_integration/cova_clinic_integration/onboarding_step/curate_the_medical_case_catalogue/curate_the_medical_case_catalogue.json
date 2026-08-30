@@ -1,0 +1,22 @@
+{
+ "action": "Create Entry",
+ "action_label": "Medical case overview",
+ "creation": "2026-08-30 10:00:00.000000",
+ "description": "<b>What this is.</b> A simple list of the illnesses and conditions the clinic sees, which you set up once and add to now and then. These names are used everywhere else, so write each one the same way every time \u2014 the same illness typed two different ways will be counted as two separate things.<br><br><b>A guided tour.</b> Opening this step walks you through the page one box at a time and explains what each one is for. You can start it again whenever you like with the small <b>i</b> button at the top of the page.<br><br><b>Where to find it.</b> To see the ones already there, open <b>Medical Case</b> from the menu on the left.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "form_tour": "Medical Case Walkthrough",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-08-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Curate the Medical Case Catalogue",
+ "owner": "Administrator",
+ "reference_document": "Medical Case",
+ "show_form_tour": 1,
+ "show_full_form": 1,
+ "title": "Medical Case \u2014 the list of illnesses",
+ "validate_action": 1
+}

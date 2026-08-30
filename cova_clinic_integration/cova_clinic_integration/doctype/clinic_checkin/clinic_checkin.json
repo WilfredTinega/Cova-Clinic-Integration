@@ -1,20 +1,20 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "CC-.#############",
  "creation": "2026-07-30 12:40:58.551748",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "biometrics_tab",
-  "b_employee",
   "column_break_bfqq",
+  "employee",
   "employee_payroll_number",
   "column_break_foxc",
   "log_type",
   "column_break_bkxl",
   "time",
   "api_tab",
-  "employee",
   "cova_member",
   "column_break_dret",
   "full_name",
@@ -40,20 +40,24 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Employee",
-   "options": "Employee"
+   "options": "Employee",
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "cova_member",
    "fieldtype": "Link",
    "label": "Cova Member",
    "options": "Cova Members",
-   "description": "Filled in automatically; links this record back to the member's Cova record."
+   "search_index": 1
   },
   {
    "fetch_from": "employee.employee_number",
+   "fetch_if_empty": 1,
    "fieldname": "payroll_number",
    "fieldtype": "Data",
-   "label": "Payroll Number"
+   "label": "Payroll Number",
+   "read_only": 1
   },
   {
    "fetch_from": "employee.employee_name",
@@ -117,15 +121,6 @@
    "label": "Biometrics"
   },
   {
-   "fieldname": "b_employee",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Employee",
-   "link_filters": "[[\"Employee\",\"status\",\"=\",\"Active\"]]",
-   "options": "Employee"
-  },
-  {
    "fieldname": "column_break_bfqq",
    "fieldtype": "Column Break"
   },
@@ -134,7 +129,8 @@
    "fetch_if_empty": 1,
    "fieldname": "employee_payroll_number",
    "fieldtype": "Data",
-   "label": "Employee Payroll Number"
+   "label": "Employee Payroll Number",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_foxc",
@@ -178,10 +174,11 @@
   }
  ],
  "links": [],
- "modified": "2026-07-30 13:14:01.554291",
+ "modified": "2026-08-30 20:28:51.379611",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Clinic Checkin",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {

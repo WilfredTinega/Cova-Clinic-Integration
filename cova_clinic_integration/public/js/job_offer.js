@@ -10,7 +10,7 @@
 function toggle_cova_mandatory(frm) {
     const clinic_company = frappe.boot.cova_clinic_company;
     const applies = Boolean(clinic_company) && frm.doc.company === clinic_company;
-    ['custom_national_id', 'custom_phone_number'].forEach(function(fieldname) {
+    ['national_id', 'phone_number'].forEach(function(fieldname) {
         if (frm.fields_dict[fieldname]) {
             frm.toggle_reqd(fieldname, applies);
         }
@@ -34,14 +34,14 @@ frappe.ui.form.on('Job Offer', {
         }
 
         // Already tested - candidate is locked, no button
-        if (frm.doc.custom_cova_tested) {
+        if (frm.doc.cova_tested) {
             frm.dashboard.add_comment(__('This candidate has completed their pre-employment wellness test and is locked.'), 'blue', true);
             return;
         }
 
         // ─── REGISTER & REQUEST WELLNESS ────────────────────
         frm.add_custom_button(__('Register & Request Wellness'), function() {
-            if (!frm.doc.custom_national_id) {
+            if (!frm.doc.national_id) {
                 frappe.msgprint(__('Please enter the National ID before registering.'));
                 return;
             }

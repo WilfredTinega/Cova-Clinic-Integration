@@ -43,7 +43,14 @@ frappe.listview_settings[DOCTYPE] = Object.assign({}, prior, {
                 primary_action: function() {
                     const checked = [];
                     d.$wrapper.find('.cova-emp-check:checked').each(function() {
-                        checked.push($(this).data('emp'));
+                        // attr(), never data(): jQuery's .data() coerces a
+                        // numeric-looking value, so a payroll-style Employee id
+                        // such as "101253" comes back as the number 101253. Sent
+                        // as JSON that becomes an unquoted integer, and the
+                        // server's `name = 101253` against a varchar column makes
+                        // MySQL cast every row — which errors on the ids that are
+                        // not numeric ("Truncated incorrect DECIMAL value").
+                        checked.push(String($(this).attr('data-emp')));
                     });
                     if (!checked.length) {
                         frappe.msgprint(__('Select at least one employee.'));
@@ -173,39 +180,153 @@ frappe.listview_settings[DOCTYPE] = Object.assign({}, prior, {
             load_filter_options();
         }
 
-        function run_bulk(employees, build_body, complete_title) {
-            const total = employees.length;
-            let done = 0, failed = 0, processed = 0;
-            frappe.dom.freeze(__('Processing {0} employee(s)...', [total]));
+        // Reading one row's outcome out of the endpoint's reply.
+        //
+        // Three things can come back and they used to be flattened into a bare
+        // "failed" with no reason: COVA rejecting the row (the server now hands
+        // over COVA's own message rather than raising), the server throwing
+        // (data.exc), and COVA answering 200 with status "duplicate" — an
+        // already-enrolled member, which is not a failure and not a new
+        // registration either.
+        function read_outcome(data) {
+            const msg = (data && data.message) || {};
+            const inner = msg.deactivation || msg;
 
-            employees.forEach(function(emp_name) {
-                fetch('/api/method/cova_clinic_api', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': frappe.csrf_token },
-                    body: JSON.stringify(build_body(emp_name))
-                })
-                .then(function(res) { return res.text(); })
-                .then(function(text) {
-                    let data;
-                    try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
-                    const msg = data.message || {};
-                    const inner = msg.deactivation || msg;
-                    if (inner && !inner.error) { done++; } else { failed++; }
-                })
-                .catch(function() { failed++; })
-                .finally(function() {
-                    processed++;
-                    if (processed === total) {
-                        frappe.dom.unfreeze();
-                        frappe.msgprint({
-                            title: complete_title,
-                            message: __('Success: {0}<br>Failed: {1}', [done, failed]),
-                            indicator: failed ? 'orange' : 'green'
-                        });
-                        listview.refresh();
-                    }
+            if (data && data._server_messages) {
+                let reason = data._server_messages;
+                try {
+                    reason = JSON.parse(data._server_messages)
+                        .map(function(m) { try { return JSON.parse(m).message; } catch (e) { return m; } })
+                        .join(' ');
+                } catch (e) { /* leave it as the raw string */ }
+                return { state: 'failed', reason: frappe.utils.strip_html(String(reason)) };
+            }
+            if (data && data.exc_type) {
+                // exc_type alone is a class name — "OperationalError" tells the
+                // person reading the report nothing they can act on. Prefer the
+                // exception's last line, which carries the actual message.
+                let detail = '';
+                try {
+                    const exc = Array.isArray(data.exc) ? data.exc.join('\n') : (data.exc || '');
+                    const lines = String(JSON.parse(exc || '[]').join('\n') || exc)
+                        .split('\n').filter(function(l) { return l.trim(); });
+                    detail = lines.length ? lines[lines.length - 1].trim() : '';
+                } catch (e) {
+                    const lines = String(data.exc || '').split('\n')
+                        .filter(function(l) { return l.trim(); });
+                    detail = lines.length ? lines[lines.length - 1].trim() : '';
+                }
+                return { state: 'failed', reason: detail || data.exc_type };
+            }
+            if (inner && inner.error) {
+                return { state: 'failed', reason: inner.error };
+            }
+            if (inner && inner.status === 'duplicate') {
+                return { state: 'duplicate', reason: inner.message || __('Already enrolled on Cova') };
+            }
+            return { state: 'done' };
+        }
+
+        // Counts plus a table of what went wrong, so a 200-row sweep does not
+        // end in "Failed: 37" with nowhere to go next.
+        function report_bulk(title, done, duplicates, failures) {
+            let message = __('Succeeded: {0}', [done]);
+            if (duplicates) {
+                message += '<br>' + __('Already on Cova (skipped): {0}', [duplicates]);
+            }
+            message += '<br>' + __('Failed: {0}', [failures.length]);
+
+            if (failures.length) {
+                message += '<div style="max-height:320px;overflow-y:auto;margin-top:10px;' +
+                    'border:1px solid var(--border-color);border-radius:6px;">' +
+                    '<table class="table table-bordered" style="margin:0;font-size:13px;">' +
+                    '<thead style="position:sticky;top:0;background:var(--fg-color);z-index:1;"><tr><th>' +
+                    __('Record') + '</th><th>' + __('Why it failed') + '</th></tr></thead><tbody>';
+                failures.forEach(function(f) {
+                    message += '<tr><td>' + frappe.utils.escape_html(f.name) + '</td><td>' +
+                        frappe.utils.escape_html(String(f.reason || __('Unknown error'))) + '</td></tr>';
                 });
+                message += '</tbody></table></div>';
+            }
+
+            frappe.msgprint({
+                title: title,
+                message: message,
+                indicator: failures.length ? 'orange' : 'green'
             });
+        }
+
+        // A sweep of 200 employees used to open 200 sockets at once, and the
+        // browser drops the overflow as "TypeError: Failed to fetch" — rows that
+        // never reached the server at all, reported as if COVA had refused them.
+        // Each row is one outbound call to COVA, so a small pool is also kinder
+        // to the far end. Runs in order, a few at a time, with live progress.
+        const BULK_CONCURRENCY = 4;
+
+        function run_pool(items, worker, complete_title) {
+            const total = items.length;
+            let done = 0, duplicates = 0, processed = 0, cursor = 0;
+            const failures = [];
+
+            function progress() {
+                frappe.dom.freeze(__('Processing {0} of {1}...', [processed, total]));
+            }
+            progress();
+
+            function record(item, outcome) {
+                if (outcome.state === 'done') { done++; }
+                else if (outcome.state === 'duplicate') { duplicates++; }
+                else { failures.push({ name: item, reason: outcome.reason }); }
+            }
+
+            function finish_one(item, outcome) {
+                record(item, outcome);
+                processed++;
+                progress();
+                if (processed === total) {
+                    frappe.dom.unfreeze();
+                    report_bulk(complete_title, done, duplicates, failures);
+                    listview.refresh();
+                    return;
+                }
+                pump();
+            }
+
+            function pump() {
+                if (cursor >= total) { return; }
+                const item = items[cursor++];
+                worker(item)
+                    .then(function(outcome) { finish_one(item, outcome); })
+                    .catch(function(err) {
+                        finish_one(item, { state: 'failed', reason: String(err && err.message || err) });
+                    });
+            }
+
+            if (!total) {
+                frappe.dom.unfreeze();
+                return;
+            }
+            for (let i = 0; i < Math.min(BULK_CONCURRENCY, total); i++) { pump(); }
+        }
+
+        function post_action(body) {
+            return fetch('/api/method/cova_clinic_api', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': frappe.csrf_token },
+                body: JSON.stringify(body)
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(text) {
+                let data;
+                try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
+                return read_outcome(data);
+            });
+        }
+
+        function run_bulk(employees, build_body, complete_title) {
+            run_pool(employees, function(emp_name) {
+                return post_action(build_body(emp_name));
+            }, complete_title);
         }
 
         // ─── REGISTER ───────────────────────────────────────
@@ -239,57 +360,47 @@ frappe.listview_settings[DOCTYPE] = Object.assign({}, prior, {
                 ],
                 on_submit: function(employees, values) {
                     if (!values.test_package) { frappe.msgprint(__('Select a test package.')); return; }
-                    const total = employees.length;
-                    let done = 0, failed = 0, processed = 0;
-                    frappe.dom.freeze(__('Creating {0} test requests...', [total]));
 
-                    employees.forEach(function(emp_name) {
-                        frappe.call({
-                            method: 'frappe.client.insert',
-                            args: {
-                                doc: {
-                                    doctype: 'Clinic Test Request',
-                                    member_type: 'Active',
-                                    employee: emp_name,
-                                    status: 'Pending',
-                                    test_package: values.test_package,
-                                    scheduled_from: values.scheduled_from,
-                                    scheduled_to: values.scheduled_to,
-                                    notes: values.notes || ''
+                    run_pool(employees, function(emp_name) {
+                        return new Promise(function(resolve, reject) {
+                            frappe.call({
+                                method: 'frappe.client.insert',
+                                args: {
+                                    doc: {
+                                        doctype: 'Clinic Test Request',
+                                        member_type: 'Active',
+                                        employee: emp_name,
+                                        status: 'Pending',
+                                        test_package: values.test_package,
+                                        scheduled_from: values.scheduled_from,
+                                        scheduled_to: values.scheduled_to,
+                                        notes: values.notes || ''
+                                    }
+                                },
+                                callback: function(r) {
+                                    if (r.exc || !r.message) {
+                                        // The Clinic Test Request itself would not save — report
+                                        // that, since nothing reached COVA at all.
+                                        resolve({
+                                            state: 'failed',
+                                            reason: (r.exc_type || __('Could not create the Clinic Test Request'))
+                                        });
+                                        return;
+                                    }
+                                    post_action({
+                                        action: 'submit_test_request',
+                                        request_name: r.message.name
+                                    }).then(resolve, reject);
+                                },
+                                error: function(r) {
+                                    resolve({
+                                        state: 'failed',
+                                        reason: (r && r.exc_type) || __('Could not create the Clinic Test Request')
+                                    });
                                 }
-                            },
-                            callback: function(r) {
-                                if (!r.exc && r.message) {
-                                    fetch('/api/method/cova_clinic_api', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': frappe.csrf_token },
-                                        body: JSON.stringify({ action: 'submit_test_request', request_name: r.message.name })
-                                    })
-                                    .then(function(res) { return res.text(); })
-                                    .then(function(text) {
-                                        let data;
-                                        try { data = JSON.parse(text); } catch (e) { data = { raw: text }; }
-                                        const msg = data.message || {};
-                                        if (msg && !msg.error) { done++; } else { failed++; }
-                                    })
-                                    .catch(function() { failed++; })
-                                    .finally(function() { processed++; if (processed === total) { finish(); } });
-                                } else {
-                                    failed++; processed++; if (processed === total) { finish(); }
-                                }
-                            }
+                            });
                         });
-                    });
-
-                    function finish() {
-                        frappe.dom.unfreeze();
-                        frappe.msgprint({
-                            title: __('Test Requests Complete'),
-                            message: __('Sent: {0}<br>Failed: {1}', [done, failed]),
-                            indicator: failed ? 'orange' : 'green'
-                        });
-                        listview.refresh();
-                    }
+                    }, __('Test Requests Complete'));
                 }
             });
         }, __('Clinic'));
