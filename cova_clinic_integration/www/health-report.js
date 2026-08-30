@@ -773,7 +773,7 @@
 
     biometric: {
       title: 'Clinic Visits — Biometric',
-      subtitle: 'Footfall from the biometric punch log (b_employee / log type / time)',
+      subtitle: 'Footfall from the biometric punch log (log type / time)',
       url: CHECKIN_URL,
       pick: function (res) { return res.biometric || {}; },
       filters: [],

@@ -3,6 +3,9 @@
 
 import frappe
 
+from cova_clinic_integration.cova_clinic_integration.doctype.clinic_checkin.clinic_checkin import (
+	resolve_leave_approver,
+)
 from cova_clinic_integration.testing import (
 	IntegrationTestCase,
 	ensure_sick_leave_prerequisites,
@@ -101,6 +104,22 @@ class TestClinicCheckin(IntegrationTestCase):
 		self.assertEqual(leave.docstatus, 1)
 		self.assertEqual(str(leave.from_date), "2026-06-02")
 		self.assertEqual(str(leave.to_date), "2026-06-03")
+
+	def test_leave_approver_is_filled_in_when_hrms_demands_one(self):
+		# HR Settings ships with "Leave Approver Mandatory In Leave Application"
+		# on, and an employee record with no approver on it then took the whole
+		# leave down (HRMS: "Leave Approver is mandatory"). The check-in has no
+		# human in front of it to pick one, so it falls back to the user the
+		# check-in arrived as.
+		frappe.db.set_single_value("HR Settings", "leave_approver_mandatory_in_leave_application", 1)
+		employee = frappe.get_doc("Employee", make_employee("CV-TEST-9016"))
+		self.assertFalse(employee.leave_approver, "fixture is only meaningful without an approver")
+		self.assertEqual(resolve_leave_approver(employee), frappe.session.user)
+
+	def test_leave_approver_is_left_alone_when_hrms_does_not_demand_one(self):
+		frappe.db.set_single_value("HR Settings", "leave_approver_mandatory_in_leave_application", 0)
+		employee = frappe.get_doc("Employee", make_employee("CV-TEST-9017"))
+		self.assertIsNone(resolve_leave_approver(employee))
 
 	def test_duplicates_are_allowed(self):
 		employee = make_employee("CV-TEST-9013")

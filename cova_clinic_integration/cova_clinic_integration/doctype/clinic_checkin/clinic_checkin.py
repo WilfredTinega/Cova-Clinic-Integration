@@ -34,8 +34,8 @@ class ClinicCheckin(Document):
 	# end: auto-generated types
 
 	def validate(self):
-		# Punches identify their employee through b_employee, which set_cova_member
-		# handles — see member_link.
+		# Punches and sick-offs both name their person in `employee`; what tells
+		# them apart is the payload. See member_link for the lookup.
 		set_cova_member(self)
 
 	def after_insert(self):
@@ -117,8 +117,9 @@ class ClinicCheckin(Document):
 			leave.to_date = self.end_date
 			leave.posting_date = frappe.utils.nowdate()
 			leave.description = self.reason
-			leave.leave_approver = employee.leave_approver
-			leave.leave_approver_name = employee.leave_approver
+			approver = resolve_leave_approver(employee)
+			leave.leave_approver = approver
+			leave.leave_approver_name = frappe.utils.get_fullname(approver) if approver else None
 			leave.status = "Approved"
 			leave.leave_balance = available_balance
 			leave.flags.ignore_permissions = True
@@ -138,3 +139,42 @@ class ClinicCheckin(Document):
 
 		except Exception:
 			frappe.log_error(title="Sick Leave - FAILED", message=frappe.get_traceback())
+
+
+def resolve_leave_approver(employee) -> str | None:
+	"""Who the auto-created sick leave is filed under.
+
+	HRMS refuses to save a Leave Application with an empty ``leave_approver``
+	when HR Settings has "Leave Approver Mandatory In Leave Application" set —
+	which is its default — and a check-in has nobody in front of it to pick one,
+	so the whole leave was being swallowed for any employee whose record carries
+	no approver. Walk the same chain the Leave Application form walks
+	(employee → department → reporting manager), and only where the setting
+	actually demands a value fall back to whoever the check-in came in as.
+	"""
+	if employee.leave_approver:
+		return employee.leave_approver
+
+	if employee.department:
+		approver = frappe.db.get_value(
+			"Department Approver",
+			{"parent": employee.department, "parentfield": "leave_approvers", "idx": 1},
+			"approver",
+		)
+		if approver:
+			return approver
+
+	if employee.reports_to:
+		approver = frappe.db.get_value("Employee", employee.reports_to, "user_id")
+		if approver:
+			return approver
+
+	if not frappe.db.get_single_value("HR Settings", "leave_approver_mandatory_in_leave_application"):
+		return None
+
+	# Nothing on the employee record, and HRMS will not take the leave without
+	# one: file it under the user the check-in arrived as.
+	user = frappe.session.user
+	if user and user != "Guest" and frappe.db.exists("User", user):
+		return user
+	return "Administrator"
