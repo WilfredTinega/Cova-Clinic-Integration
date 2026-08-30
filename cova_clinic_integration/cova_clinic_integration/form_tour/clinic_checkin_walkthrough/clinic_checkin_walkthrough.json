@@ -120,8 +120,8 @@
    "ui_tour": 0
   },
   {
-   "description": "The other tab holds clinic door punches: an employee, a time, and IN or OUT. No dates, so <b>no leave is raised</b> \u2014 deliberately. Duplicates are allowed on both tabs, because the clinic is the authority on who walked in.",
-   "fieldname": "b_employee",
+   "description": "The other half of this form. A row on the <b>Biometrics</b> tab is somebody tapping in at the clinic door: <b>Log Type</b> says whether they were going in or coming out, and <b>Time</b> is when.<br><br>Leave the sick-off dates empty on one of these \u2014 dates are what turn a row into a sick note and book the time off.",
+   "fieldname": "log_type",
    "fieldtype": "Link",
    "has_next_condition": 0,
    "hide_buttons": 0,
@@ -138,7 +138,7 @@
   },
   {
    "description": "This one doctype carries two unrelated things, and which fields you fill decides which.<br><br><b>Sick-off</b> \u2014 employee, start and end date, reason. Saving it raises a <b>Sick Leave Application</b> for that person, so the absence reaches HR without anyone keying it twice.<br><br><b>Biometric punch</b> \u2014 the Biometrics tab, one row per tap at the clinic door. These are what <b>Clinic Visits</b> on the dashboard counts, and what a Clinic Visit Cost is matched against to prove somebody was actually there.<br><br>Fill the fields marked <i>required</i> and press <b>Save</b> (Ctrl+S). The onboarding step ticks itself off as soon as the record exists.",
-   "fieldname": "b_employee",
+   "fieldname": "log_type",
    "fieldtype": "Link",
    "has_next_condition": 0,
    "hide_buttons": 0,

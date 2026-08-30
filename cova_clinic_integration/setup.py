@@ -248,10 +248,11 @@ def install_clinic_fields():
 # The app's own doctypes carry their connections in their JSON. Employee is
 # standard, so its DocType Link rows are installed the same way its fields are.
 #
-# Clinic Checkin appears twice on purpose: the sick-off records hang off
-# `employee`, punches and sick-offs alike. DocType Link has no
-# label override, so they are put in separate groups — otherwise the Connections
-# tab would show two identical "Clinic Checkin" entries.
+# Clinic Checkin appears once. It used to appear twice, one entry per employee
+# field, back when punches and sick-offs named their person in different
+# columns. Both use `employee` now, so a second entry is simply a duplicate row
+# in the Connections tab — DocType Link has no label override, so two entries
+# for the same doctype and field are indistinguishable.
 CLINIC_CONNECTIONS = {
 	"Employee": [
 		{"group": "Cova Clinic", "link_doctype": "Cova Members", "link_fieldname": "employee"},
@@ -259,7 +260,6 @@ CLINIC_CONNECTIONS = {
 		{"group": "Cova Clinic", "link_doctype": "Clinic Test Request", "link_fieldname": "employee"},
 		{"group": "Cova Clinic", "link_doctype": "Clinic Test Result", "link_fieldname": "employee"},
 		{"group": "Clinic Attendance", "link_doctype": "Clinic Checkin", "link_fieldname": "employee"},
-		{"group": "Clinic Visits", "link_doctype": "Clinic Checkin", "link_fieldname": "employee"},
 	],
 }
 

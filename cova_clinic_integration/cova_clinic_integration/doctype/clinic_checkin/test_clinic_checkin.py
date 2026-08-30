@@ -17,12 +17,28 @@ SICK_LEAVE_TYPE = "Sick Leave (Full Pay)"
 # themselves (see cova_clinic_integration.testing.make_employee).
 IGNORE_TEST_RECORD_DEPENDENCIES = ["Employee", "Company", "Leave Application"]
 
+def _last_sick_leave_error() -> str:
+	"""Whatever create_sick_leave_application last logged, for a failing assert."""
+	rows = frappe.get_all(
+		"Error Log",
+		filters={"method": ["like", "%Sick Leave - FAILED%"]},
+		fields=["error"],
+		order_by="creation desc",
+		limit=1,
+	)
+	if not rows:
+		return "(nothing logged — the leave was skipped before it was attempted)"
+	return (rows[0]["error"] or "")[-800:]
+
+
 class TestClinicCheckin(IntegrationTestCase):
 	"""Clinic Checkin carries two unrelated payloads on one doctype:
 
-	* biometric punches (``b_employee`` / ``log_type`` / ``time``);
-	* sick-off records (``employee`` + ``start_date`` + ``end_date``), and only
-	  those raise a Leave Application.
+	* biometric punches (``log_type`` / ``time``);
+	* sick-off records (``start_date`` + ``end_date``), and only those raise a
+	  Leave Application.
+
+	Both name their person in ``employee``; the payload is what tells them apart.
 
 	Duplicates are allowed on purpose — the live "duplicate prevention" hook was
 	deliberately not ported.
@@ -42,7 +58,7 @@ class TestClinicCheckin(IntegrationTestCase):
 
 	def test_biometric_punch_raises_no_leave(self):
 		employee = make_employee("CV-TEST-9011")
-		doc = self._checkin(b_employee=employee, log_type="IN", time="2026-06-01 08:15:00")
+		doc = self._checkin(employee=employee, log_type="IN", time="2026-06-01 08:15:00")
 		self.assertIsNone(doc.leave_application)
 
 	def test_dated_checkin_does_not_raise(self):
@@ -72,7 +88,13 @@ class TestClinicCheckin(IntegrationTestCase):
 			end_date="2026-06-03",
 			reason="fever",
 		)
-		self.assertIsNotNone(doc.leave_application, "no Leave Application was created")
+		# The controller swallows a failure and logs it, so an assertion that just
+		# says "None" tells you nothing on a machine you cannot open. Quote the
+		# reason it recorded.
+		self.assertIsNotNone(
+			doc.leave_application,
+			"no Leave Application was created. Controller reported:\n" + _last_sick_leave_error(),
+		)
 		leave = frappe.get_doc("Leave Application", doc.leave_application)
 		self.assertEqual(leave.leave_type, SICK_LEAVE_TYPE)
 		self.assertEqual(leave.status, "Approved")

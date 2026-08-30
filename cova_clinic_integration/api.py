@@ -453,6 +453,10 @@ def cova_clinic_api():
 				)
 			save_cova_response(cm_name, result)
 
+			# COVA's own reply is the response. Dropping this line made the
+			# endpoint return None for every registration, success or refusal.
+			resp = result
+
 	# ─── 2. DEACTIVATE MEMBER (single) ────────────────────────────────
 	elif action == "deactivate_member":
 		base_url = frappe.db.get_single_value("Cova Clinic Settings", "base_url")

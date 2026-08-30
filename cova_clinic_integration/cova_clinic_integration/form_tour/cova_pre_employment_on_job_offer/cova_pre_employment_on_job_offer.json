@@ -137,7 +137,7 @@
    "ui_tour": 0
   },
   {
-   "description": "That is everything you fill in. The rest of the COVA block \u2014 <b>Cova Registered?</b>, <b>Cova Tested?</b> and <b>Linked Test Result</b> \u2014 is read-only and fills itself in as the candidate moves through the clinic.<br><br><b>Where you go next:</b> save the offer, then use <b>Clinic &rsaquo; Register &amp; Request Wellness</b>. That enrols the candidate on COVA as a pre-employment member and raises the test request in one step.<br><br>When COVA answers, <b>Linked Test Result</b> here points at the <b>Clinic Test Result</b> \u2014 check its <b>Clinical Outcome</b> before confirming the offer.",
+   "description": "That is everything you fill in. The rest of the COVA block \u2014 <b>Cova Registered?</b>, <b>Cova Tested?</b> and <b>Linked Test Result</b> \u2014 is read-only and fills itself in as the candidate moves through the clinic.<br><br><b>Where you go next:</b> press <b>Save</b>, then use <b>Clinic &rsaquo; Register &amp; Request Wellness</b>. That enrols the candidate on COVA as a pre-employment member and raises the test request in one step.<br><br>When COVA answers, <b>Linked Test Result</b> here points at the <b>Clinic Test Result</b> \u2014 check its <b>Clinical Outcome</b> before confirming the offer.",
    "fieldname": "date_of_birth",
    "fieldtype": "Date",
    "has_next_condition": 0,
