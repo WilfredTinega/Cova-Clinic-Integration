@@ -170,6 +170,18 @@
   </main>
 
   <!-- Employee breakdown modal (right sidebar) -->
+  <div class="cdd-trend-modal" id="cdd-trend-modal" role="dialog" aria-modal="true" aria-labelledby="cdd-trend-title">
+    <div class="cdd-trend-dialog">
+      <div class="cdd-modal-header">
+        <h3 id="cdd-trend-title">Conditions Trend</h3>
+        <button class="cdd-modal-close" id="cdd-trend-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="cdd-filters cdd-trend-filters" id="cdd-trend-filters"></div>
+      <div class="cdd-trend-status" id="cdd-trend-status"></div>
+      <div class="cdd-trend-body" id="cdd-trend-body"><canvas id="c-trend-modal"></canvas></div>
+    </div>
+  </div>
+
   <div class="cdd-modal-overlay" id="cdd-emp-modal">
     <div class="cdd-modal-header">
       <h3 id="cdd-emp-modal-title">Employee Visit Breakdown</h3>

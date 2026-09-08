@@ -1049,26 +1049,17 @@ def cova_clinic_api():
 # ─── health / disease report endpoint ───────────────────────────────────────
 
 
-@frappe.whitelist()
-def clinic_disease_report():
-	"""Pivot the Health Monthly Report / Health Report data into a condition x
-	month matrix plus a multi-year monthly trend and filter option lists.
+def _disease_where(data):
+	"""WHERE clause + params for the Health Monthly Report (hmr) / Health Report
+	(hr) join, shared by the report and its drill-down lists so a list can never
+	disagree with the tile that opened it."""
+	filters = {}
+	clauses = []
 
-	HR-only — the /health-report portal page gates on the same check, and this
-	guard stops the endpoint being read directly by non-HR sessions."""
-	assert_health_report_access()
-
-	data = frappe.request.get_json() or {}
 	year = data.get("year")
 	f_month = (data.get("month") or "").upper()
 	f_posting_date = data.get("posting_date")
 	f_medical_case = data.get("medical_case")
-
-	month_order = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
-
-	# Build WHERE clause with named params
-	filters = {}
-	clauses = []
 
 	if year:
 		clauses.append("YEAR(hmr.posting_date) = %(year)s")
@@ -1083,6 +1074,17 @@ def clinic_disease_report():
 		clauses.append("hr.medical_case = %(medical_case)s")
 		filters["medical_case"] = f_medical_case
 
+	# A set of months (the trend dialog's toggles); a single ``month`` above
+	# still works for every other caller.
+	f_months = data.get("months")
+	if isinstance(f_months, str):
+		f_months = [m for m in f_months.split(",") if m.strip()]
+	if f_months:
+		wanted = [str(m).upper() for m in f_months if str(m).upper() in MONTH_LABELS]
+		if wanted:
+			clauses.append("UPPER(hmr.month) IN %(months)s")
+			filters["months"] = tuple(wanted)
+
 	range_clauses, range_params = _range_clauses("hmr.posting_date", data)
 	clauses.extend(range_clauses)
 	filters.update(range_params)
@@ -1090,6 +1092,114 @@ def clinic_disease_report():
 	where_clause = ""
 	if clauses:
 		where_clause = " WHERE " + " AND ".join(clauses)
+	return where_clause, filters
+
+
+_DISEASE_FROM = (
+	"FROM `tabHealth Monthly Report` hmr INNER JOIN `tabHealth Report` hr ON hr.parent = hmr.name"
+)
+
+
+@frappe.whitelist()
+def disease_report_detail():
+	"""The records behind one Disease & Health KPI tile.
+
+	``kind`` picks the tile: ``total`` lists every Health Report line (one
+	condition in one monthly report), ``conditions`` one row per condition,
+	``average`` and ``months`` one row per monthly report. Filters are applied
+	exactly as the tiles compute them."""
+	assert_health_report_access()
+	data = frappe.request.get_json() or {}
+	kind = (data.get("kind") or "total").strip()
+	where, params = _disease_where(data)
+	month_sort = "FIELD(UPPER(hmr.month),'JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC')"
+
+	if kind == "conditions_by_month":
+		# One row per condition per month, for a line per month in the trend.
+		rows = frappe.db.sql(
+			"SELECT COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, "
+			"UPPER(hmr.month) AS month, SUM(hr.case_count) AS total "
+			+ _DISEASE_FROM + where
+			+ " GROUP BY hr.medical_case, UPPER(hmr.month) ORDER BY total DESC LIMIT 2000",
+			params,
+			as_dict=True,
+		)
+		for r in rows:
+			r["total"] = int(r.get("total") or 0)
+	elif kind == "conditions":
+		rows = frappe.db.sql(
+			"SELECT COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, "
+			"SUM(hr.case_count) AS total, COUNT(DISTINCT hmr.name) AS reports "
+			+ _DISEASE_FROM + where
+			+ " GROUP BY hr.medical_case ORDER BY total DESC, medical_case ASC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+		for r in rows:
+			r["total"] = int(r.get("total") or 0)
+			r["reports"] = int(r.get("reports") or 0)
+			if r["medical_case"] != "Unspecified" and frappe.db.exists("Medical Case", r["medical_case"]):
+				r["route"] = _desk_form_route("Medical Case", r["medical_case"])
+	elif kind in ("average", "months"):
+		rows = frappe.db.sql(
+			"SELECT hmr.name, UPPER(hmr.month) AS month, hmr.posting_date, "
+			"SUM(hr.case_count) AS total, COUNT(DISTINCT hr.medical_case) AS conditions "
+			+ _DISEASE_FROM + where
+			+ " GROUP BY hmr.name ORDER BY hmr.posting_date DESC, " + month_sort + " DESC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+		for r in rows:
+			r["total"] = int(r.get("total") or 0)
+			r["conditions"] = int(r.get("conditions") or 0)
+			r["posting_date"] = str(r["posting_date"]) if r.get("posting_date") else ""
+			r["route"] = _desk_form_route("Health Monthly Report", r["name"])
+	else:
+		rows = frappe.db.sql(
+			"SELECT hmr.name, UPPER(hmr.month) AS month, hmr.posting_date, "
+			"COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, hr.case_count AS total "
+			+ _DISEASE_FROM + where
+			+ " ORDER BY hmr.posting_date DESC, " + month_sort + " DESC, hr.case_count DESC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+		# How many distinct report months each condition appears in, within
+		# the same filters, so a line can say whether the case keeps recurring.
+		recurrence = {
+			r["medical_case"]: int(r["months"] or 0)
+			for r in frappe.db.sql(
+				"SELECT COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, "
+				"COUNT(DISTINCT CONCAT(YEAR(hmr.posting_date), '-', UPPER(hmr.month))) AS months "
+				+ _DISEASE_FROM + where + " GROUP BY hr.medical_case",
+				params,
+				as_dict=True,
+			)
+		}
+		for r in rows:
+			r["total"] = int(r.get("total") or 0)
+			r["posting_date"] = str(r["posting_date"]) if r.get("posting_date") else ""
+			r["months_seen"] = recurrence.get(r["medical_case"], 0)
+			r["route"] = _desk_form_route("Health Monthly Report", r["name"])
+
+	out = {"kind": kind, "rows": rows, "total": sum(r["total"] for r in rows)}
+	frappe.response["message"] = out
+	return out
+
+
+@frappe.whitelist()
+def clinic_disease_report():
+	"""Pivot the Health Monthly Report / Health Report data into a condition x
+	month matrix plus a multi-year monthly trend and filter option lists.
+
+	HR-only — the /health-report portal page gates on the same check, and this
+	guard stops the endpoint being read directly by non-HR sessions."""
+	assert_health_report_access()
+
+	data = frappe.request.get_json() or {}
+
+	month_order = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
+
+	where_clause, filters = _disease_where(data)
 
 	query = (
 		"SELECT hmr.month AS month, hr.medical_case AS m_condition, SUM(hr.case_count) AS cnt "
@@ -1208,9 +1318,26 @@ def clinic_disease_report():
 	)
 	all_cases = [r.get("medical_case") for r in all_cases_rows if r.get("medical_case")]
 
+	# Per-month series for the tile sparklines: the year alone, month and
+	# range filters dropped, every other filter kept.
+	yr_where, yr_params = _disease_where({"year": data.get("year"), "medical_case": data.get("medical_case")})
+	series_rows = frappe.db.sql(
+		"SELECT UPPER(hmr.month) AS m, SUM(hr.case_count) AS total, COUNT(DISTINCT hr.medical_case) AS conditions "
+		+ _DISEASE_FROM + yr_where + " GROUP BY UPPER(hmr.month)",
+		yr_params,
+		as_dict=True,
+	)
+	kpi_series = _kpi_series(series_rows, ["total", "conditions"])
+	reported, running = [], 0
+	for v in kpi_series["total"]:
+		running += 1 if v else 0
+		reported.append(running)
+	kpi_series["months_reported"] = reported
+
 	resp = {
 		"months": months_present,
 		"rows": table_sorted,
+		"kpi_series": kpi_series,
 		"col_totals": col_totals,
 		"grand_total": grand_total,
 		"monthly_average": round((grand_total * 1.0) / num_months),
@@ -1367,6 +1494,35 @@ def registered_employee_options():
 			r["label"] = f"{r['label']} · {r['payroll_number']}"
 		r.pop("payroll_number", None)
 	return rows
+
+
+def _year_clauses(clauses):
+	"""The same filter set with the month and from/to restrictions removed, so a
+	per-month series can run over the whole year the tiles sit in."""
+	return [
+		c for c in clauses
+		if "MONTH(" not in c and "from_date)s" not in c and "to_date)s" not in c
+	]
+
+
+def _kpi_series(rows, keys, month_key="m"):
+	"""GROUP BY month rows -> {key: [12 values]} for the tile sparklines.
+	``month_key`` is a 1-12 number or a MONTH_LABELS name."""
+	out = {k: [0] * 12 for k in keys}
+	for r in rows:
+		m = r.get(month_key)
+		if isinstance(m, str):
+			m = MONTH_LABELS.index(m.upper()) + 1 if m.upper() in MONTH_LABELS else None
+		if not m or not 1 <= int(m) <= 12:
+			continue
+		for k in keys:
+			v = r.get(k)
+			out[k][int(m) - 1] = round(float(v), 2) if v is not None else 0
+	return out
+
+
+def _ratio_series(num, den, digits=1):
+	return [round(n / d, digits) if d else 0 for n, d in zip(num, den)]
 
 
 def _month_series(rows):
@@ -1537,8 +1693,35 @@ def clinic_checkin_report():
 		as_dict=True,
 	)
 
+	bio_year = _where(_year_clauses(bio_clauses))
+	bio_series_rows = frappe.db.sql(
+		"SELECT MONTH(cc.time) AS m, COUNT(*) AS punches, COUNT(DISTINCT cc.employee) AS employees, "
+		"SUM(CASE WHEN cc.log_type = 'IN' THEN 1 ELSE 0 END) AS in_punches, "
+		"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches, "
+		"COUNT(DISTINCT DATE(cc.time)) AS days "
+		"FROM `tabClinic Checkin` cc" + bio_year + " GROUP BY MONTH(cc.time)",
+		bio_params,
+		as_dict=True,
+	)
+	bio_series = _kpi_series(bio_series_rows, ["punches", "employees", "in_punches", "out_punches", "days"])
+	bio_series["avg_per_day"] = _ratio_series(bio_series["punches"], bio_series["days"])
+
+	so_year = _where(_year_clauses(so_clauses))
+	so_series_rows = frappe.db.sql(
+		"SELECT MONTH(cc.start_date) AS m, COUNT(*) AS records, COUNT(DISTINCT cc.employee) AS employees, "
+		"SUM(DATEDIFF(cc.end_date, cc.start_date) + 1) AS days, "
+		"SUM(CASE WHEN cc.leave_application IS NOT NULL AND cc.leave_application != '' THEN 1 ELSE 0 END) AS with_leave "
+		"FROM `tabClinic Checkin` cc" + so_year + " GROUP BY MONTH(cc.start_date)",
+		so_params,
+		as_dict=True,
+	)
+	so_series = _kpi_series(so_series_rows, ["records", "employees", "days", "with_leave"])
+	so_series["without_leave"] = [r - w for r, w in zip(so_series["records"], so_series["with_leave"])]
+	so_series["avg_days"] = _ratio_series(so_series["days"], so_series["records"])
+
 	resp = {
 		"biometric": {
+			"kpi_series": bio_series,
 			"kpis": {
 				"punches": bio_punches,
 				"employees": int(bio_totals.get("employees") or 0),
@@ -1556,6 +1739,7 @@ def clinic_checkin_report():
 			"top_employees": bio_top,
 		},
 		"sick_off": {
+			"kpi_series": so_series,
 			"kpis": {
 				"records": so_records,
 				"employees": int(so_totals.get("employees") or 0),
@@ -1576,6 +1760,126 @@ def clinic_checkin_report():
 	}
 	frappe.response["message"] = resp
 	return resp
+
+
+def _pair_punches(punches):
+	"""Fold IN/OUT punches into visits: one row per employee per stay.
+
+	``punches`` must be ordered by employee then time. An IN opens a visit; the
+	next OUT for the same employee on the same day closes it. An OUT with no
+	open IN, or an IN never followed by an OUT, is still a visit — with one side
+	blank — so no punch disappears from the list."""
+	visits = []
+	open_visit = None
+	for p in punches:
+		t = p.get("time")
+		day = str(t)[:10] if t else ""
+		if open_visit is not None and (open_visit["employee"] != p["employee"] or open_visit["day"] != day):
+			open_visit = None
+		if (p.get("log_type") or "IN") != "OUT":
+			open_visit = {
+				"name": p["name"], "employee": p["employee"], "employee_name": p.get("employee_name"),
+				"payroll_number": p.get("payroll_number"), "day": day,
+				"time_in": t, "time_out": None, "out_name": None, "minutes": None,
+			}
+			visits.append(open_visit)
+		elif open_visit is not None and open_visit["time_out"] is None:
+			open_visit["time_out"] = t
+			open_visit["out_name"] = p["name"]
+			if open_visit["time_in"]:
+				open_visit["minutes"] = int((t - open_visit["time_in"]).total_seconds() // 60)
+			open_visit = None
+		else:
+			visits.append({
+				"name": p["name"], "employee": p["employee"], "employee_name": p.get("employee_name"),
+				"payroll_number": p.get("payroll_number"), "day": day,
+				"time_in": None, "time_out": t, "out_name": p["name"], "minutes": None,
+			})
+			open_visit = None
+	return visits
+
+
+@frappe.whitelist()
+def clinic_punch_people():
+	"""The punches behind one Clinic Visits (biometric) KPI tile.
+
+	``kind`` picks the tile: ``IN`` / ``OUT`` for one log type, ``employees``
+	for one row per person, ``days`` for one row per visit day, or nothing for
+	every punch in the period. The period is applied exactly as the tiles
+	compute it, so the list can never disagree with the number clicked."""
+	assert_health_report_access()
+	data, year, month_num = _dashboard_request()
+	kind = (data.get("kind") or "").strip()
+
+	clauses, params = _period_clauses("cc.time", year, month_num)
+	range_clauses, range_params = _range_clauses("cc.time", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	clauses.insert(0, _PUNCH_CLAUSE)
+	if kind in ("IN", "OUT"):
+		# The Checked In tile counts log_type = 'IN' only, but the hour chart
+		# treats anything that is not OUT as an arrival; follow the tile here.
+		clauses.append("cc.log_type = %(log_type)s")
+		params["log_type"] = kind
+	where = _where(clauses)
+
+	name = "COALESCE(NULLIF(e.employee_name, ''), NULLIF(cc.full_name, ''), cc.employee)"
+	ident = "COALESCE(NULLIF(cc.employee_payroll_number, ''), NULLIF(cc.payroll_number, ''))"
+	joins = " LEFT JOIN `tabEmployee` e ON e.name = cc.employee"
+	grouped = kind in ("employees", "days")
+
+	if kind == "employees":
+		rows = frappe.db.sql(
+			f"SELECT cc.employee, MAX({name}) AS employee_name, MAX({ident}) AS payroll_number, "
+			"COUNT(*) AS punches, "
+			"SUM(CASE WHEN cc.log_type = 'IN' THEN 1 ELSE 0 END) AS in_punches, "
+			"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches, "
+			"MIN(cc.time) AS first_seen, MAX(cc.time) AS last_seen "
+			"FROM `tabClinic Checkin` cc" + joins + where
+			+ " GROUP BY cc.employee ORDER BY punches DESC, employee_name ASC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+	elif kind == "days":
+		rows = frappe.db.sql(
+			"SELECT DATE(cc.time) AS day, COUNT(*) AS punches, COUNT(DISTINCT cc.employee) AS employees, "
+			"SUM(CASE WHEN cc.log_type = 'IN' THEN 1 ELSE 0 END) AS in_punches, "
+			"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches "
+			"FROM `tabClinic Checkin` cc" + where
+			+ " GROUP BY DATE(cc.time) ORDER BY day DESC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+	else:
+		punches = frappe.db.sql(
+			f"SELECT cc.name, cc.employee, {name} AS employee_name, {ident} AS payroll_number, "
+			"cc.log_type, cc.time "
+			"FROM `tabClinic Checkin` cc" + joins + where
+			+ " ORDER BY cc.employee, cc.time ASC LIMIT 2000",
+			params,
+			as_dict=True,
+		)
+		rows = _pair_punches(punches)
+		# The Checked In tile is IN punches, the Checked Out tile OUT punches:
+		# their lists are the visits carrying that side. Newest visit first.
+		rows.sort(key=lambda v: v["time_in"] or v["time_out"] or "", reverse=True)
+		rows = rows[:500]
+
+	for r in rows:
+		for k in ("punches", "in_punches", "out_punches", "employees"):
+			if r.get(k) is not None:
+				r[k] = int(r[k])
+		for k in ("time", "first_seen", "last_seen", "time_in", "time_out"):
+			if k in r:
+				r[k] = str(r[k])[:16] if r.get(k) else ""
+		if r.get("day") is not None:
+			r["day"] = str(r["day"])
+		if r.get("name"):
+			r["route"] = _desk_form_route("Clinic Checkin", r["name"])
+
+	out = {"kind": kind, "rows": rows, "grouped": grouped}
+	frappe.response["message"] = out
+	return out
 
 
 @frappe.whitelist()
@@ -1761,6 +2065,18 @@ def clinic_visit_cost_report():
 		as_dict=True,
 	)
 
+	vs_year = _where(_year_clauses(clauses))
+	vs_series_rows = frappe.db.sql(
+		"SELECT MONTH(cv.visit_date) AS m, COUNT(*) AS visits, COUNT(DISTINCT cv.employee) AS employees, "
+		"COALESCE(SUM(cv.total_cost), 0) AS cost "
+		"FROM `tabClinic Visit Cost` cv" + vs_year + " GROUP BY MONTH(cv.visit_date)",
+		params,
+		as_dict=True,
+	)
+	vs_series = _kpi_series(vs_series_rows, ["visits", "employees", "cost"])
+	vs_series["avg_cost"] = _ratio_series(vs_series["cost"], vs_series["visits"], 0)
+	vs_series["cost_per_employee"] = _ratio_series(vs_series["cost"], vs_series["employees"], 0)
+
 	resp = {
 		"currency": clinic_currency(),
 		"kpis": {
@@ -1776,6 +2092,7 @@ def clinic_visit_cost_report():
 			"balance_month": MONTH_LABELS[latest_month - 1] if latest_month else "",
 		},
 		"balances_latest": latest_by_benefit,
+		"kpi_series": vs_series,
 		"cost_by_employee": {
 			"months": list(MONTH_LABELS),
 			"rows": cost_rows,
@@ -1971,6 +2288,19 @@ def clinic_test_request_report():
 		as_dict=True,
 	)
 
+	rq_year = _where(_year_clauses(clauses))
+	rq_series_rows = frappe.db.sql(
+		"SELECT MONTH(tr.scheduled_from) AS m, COUNT(*) AS total, "
+		"SUM(CASE WHEN tr.status = 'Pending' THEN 1 ELSE 0 END) AS pending, "
+		"SUM(CASE WHEN tr.status = 'Completed' THEN 1 ELSE 0 END) AS completed, "
+		"SUM(CASE WHEN tr.status = 'Cancelled' THEN 1 ELSE 0 END) AS cancelled, "
+		"SUM(CASE WHEN tr.status = 'Pending' AND tr.scheduled_to < CURDATE() THEN 1 ELSE 0 END) AS overdue "
+		"FROM `tabClinic Test Request` tr" + rq_year + " GROUP BY MONTH(tr.scheduled_from)",
+		params,
+		as_dict=True,
+	)
+	rq_series = _kpi_series(rq_series_rows, ["total", "pending", "completed", "cancelled", "overdue"])
+
 	resp = {
 		"kpis": {
 			"total": total,
@@ -1984,6 +2314,7 @@ def clinic_test_request_report():
 		"by_month": _month_series(by_month),
 		"by_member_type": by_member_type,
 		"overdue_rows": overdue_rows,
+		"kpi_series": rq_series,
 		"filter_options": {
 			"years": [str(r.get("yr")) for r in opt_years if r.get("yr")],
 			"months": list(MONTH_LABELS),
@@ -1994,6 +2325,188 @@ def clinic_test_request_report():
 	}
 	frappe.response["message"] = resp
 	return resp
+
+
+@frappe.whitelist()
+def purpose_spend_people():
+	"""Who the spend on one purpose went to: one row per employee with their
+	line items, visits and total cost for that purpose, under the same period
+	and employee filters as the Spend by Purpose table."""
+	assert_health_report_access()
+	data, year, month_num = _dashboard_request()
+
+	clauses, params = _period_clauses("cv.visit_date", year, month_num)
+	range_clauses, range_params = _range_clauses("cv.visit_date", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	if data.get("employee"):
+		clauses.append("cv.employee = %(employee)s")
+		params["employee"] = data["employee"]
+	purpose = (data.get("purpose") or "").strip()
+	if purpose == "Unspecified":
+		clauses.append("(li.purpose IS NULL OR li.purpose = '')")
+	elif purpose:
+		clauses.append("li.purpose = %(purpose)s")
+		params["purpose"] = purpose
+	where = _where(clauses)
+
+	rows = frappe.db.sql(
+		"SELECT cv.employee, COALESCE(NULLIF(e.employee_name, ''), MAX(NULLIF(cv.full_name, '')), "
+		"MAX(NULLIF(cv.candidate_name, '')), cv.employee) AS employee_name, "
+		"MAX(cv.payroll_number) AS payroll_number, COUNT(*) AS items, COUNT(DISTINCT cv.name) AS visits, "
+		"COALESCE(SUM(li.cost), 0) AS cost, MAX(cv.visit_date) AS last_visit "
+		"FROM `tabVisit Line Item` li INNER JOIN `tabClinic Visit Cost` cv ON li.parent = cv.name "
+		"LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
+		+ where
+		+ " GROUP BY cv.employee, e.employee_name ORDER BY cost DESC, employee_name ASC LIMIT 500",
+		params,
+		as_dict=True,
+	)
+	total = 0.0
+	for r in rows:
+		r["items"] = int(r.get("items") or 0)
+		r["visits"] = int(r.get("visits") or 0)
+		r["cost"] = round(float(r.get("cost") or 0), 2)
+		total += r["cost"]
+		r["last_visit"] = str(r["last_visit"]) if r.get("last_visit") else ""
+		if r.get("employee") and frappe.db.exists("Employee", r["employee"]):
+			r["route"] = _desk_form_route("Employee", r["employee"])
+
+	out = {"purpose": purpose, "rows": rows, "total": round(total, 2)}
+	frappe.response["message"] = out
+	return out
+
+
+@frappe.whitelist()
+def sick_off_people():
+	"""The sick-off records behind one Sick-Off & Leave KPI tile.
+
+	``kind`` picks the tile: ``with_leave`` / ``without_leave`` for the two
+	leave tiles, ``employees`` for one row per person, or nothing for every
+	record in the period. The period is the sick-off start date, exactly as
+	the tiles compute it."""
+	assert_health_report_access()
+	data, year, month_num = _dashboard_request()
+	kind = (data.get("kind") or "").strip()
+
+	clauses, params = _period_clauses("cc.start_date", year, month_num)
+	range_clauses, range_params = _range_clauses("cc.start_date", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	clauses.insert(0, "cc.employee IS NOT NULL AND cc.employee != ''")
+	clauses.insert(1, "cc.start_date IS NOT NULL")
+	clauses.insert(2, "cc.end_date IS NOT NULL")
+	if kind == "with_leave":
+		clauses.append("cc.leave_application IS NOT NULL AND cc.leave_application != ''")
+	elif kind == "without_leave":
+		clauses.append("(cc.leave_application IS NULL OR cc.leave_application = '')")
+	where = _where(clauses)
+
+	name = "COALESCE(NULLIF(e.employee_name, ''), NULLIF(cc.full_name, ''), cc.employee)"
+	ident = "COALESCE(NULLIF(cc.payroll_number, ''), NULLIF(cc.employee_payroll_number, ''))"
+	joins = " LEFT JOIN `tabEmployee` e ON e.name = cc.employee"
+
+	if kind == "employees":
+		rows = frappe.db.sql(
+			f"SELECT cc.employee, MAX({name}) AS employee_name, MAX({ident}) AS payroll_number, "
+			"COUNT(*) AS episodes, SUM(DATEDIFF(cc.end_date, cc.start_date) + 1) AS days, "
+			"SUM(CASE WHEN cc.leave_application IS NOT NULL AND cc.leave_application != '' THEN 1 ELSE 0 END) AS with_leave, "
+			"MIN(cc.start_date) AS first_off, MAX(cc.end_date) AS last_off "
+			"FROM `tabClinic Checkin` cc" + joins + where
+			+ " GROUP BY cc.employee ORDER BY days DESC, employee_name ASC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+	else:
+		rows = frappe.db.sql(
+			f"SELECT cc.name, cc.employee, {name} AS employee_name, {ident} AS payroll_number, "
+			"cc.start_date, cc.end_date, DATEDIFF(cc.end_date, cc.start_date) + 1 AS days, "
+			"cc.reason, cc.leave_application "
+			"FROM `tabClinic Checkin` cc" + joins + where
+			+ " ORDER BY cc.start_date DESC, cc.name DESC LIMIT 500",
+			params,
+			as_dict=True,
+		)
+
+	for r in rows:
+		for k in ("episodes", "days", "with_leave"):
+			if r.get(k) is not None:
+				r[k] = int(r[k])
+		for k in ("start_date", "end_date", "first_off", "last_off"):
+			if k in r:
+				r[k] = str(r[k]) if r.get(k) else ""
+		if r.get("name"):
+			r["route"] = _desk_form_route("Clinic Checkin", r["name"])
+		if r.get("leave_application"):
+			r["leave_route"] = _desk_form_route("Leave Application", r["leave_application"])
+
+	out = {"kind": kind, "rows": rows, "grouped": kind == "employees"}
+	frappe.response["message"] = out
+	return out
+
+
+@frappe.whitelist()
+def test_request_people():
+	"""The requests behind one Test Requests KPI tile or Packages by Status cell.
+
+	``kind`` picks the tile: a status value, ``overdue`` for pending requests
+	past their window, or nothing for every request in the period. Any
+	``status`` / ``test_package`` / ``member_type`` filter narrows further, so a
+	cell of the package grid passes its package and status. The period is the
+	scheduled-from date, exactly as the report computes it."""
+	assert_health_report_access()
+	data, year, month_num = _dashboard_request()
+
+	clauses, params = _period_clauses("tr.scheduled_from", year, month_num)
+	range_clauses, range_params = _range_clauses("tr.scheduled_from", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	for key in ("status", "test_package", "member_type"):
+		if data.get(key):
+			if data[key] == "Unspecified":
+				clauses.append(f"(tr.{key} IS NULL OR tr.{key} = '')")
+			else:
+				clauses.append(f"tr.{key} = %({key})s")
+				params[key] = data[key]
+
+	kind = (data.get("kind") or "").strip()
+	if kind == "overdue":
+		clauses.append("tr.status = 'Pending'")
+		clauses.append("tr.scheduled_to < CURDATE()")
+	elif kind and not data.get("status"):
+		clauses.append("tr.status = %(kind)s")
+		params["kind"] = kind
+	where = _where(clauses)
+
+	rows = frappe.db.sql(
+		"SELECT tr.name, tr.employee, "
+		"COALESCE(NULLIF(e.employee_name, ''), NULLIF(jo.applicant_name, ''), "
+		"NULLIF(tr.payroll_number, ''), NULLIF(tr.nationa_id, ''), tr.name) AS who, "
+		"COALESCE(NULLIF(tr.payroll_number, ''), NULLIF(tr.nationa_id, '')) AS payroll_number, "
+		"tr.member_type, tr.test_package, tr.status, tr.scheduled_from, tr.scheduled_to, "
+		"tr.linked_test_result, "
+		"CASE WHEN tr.status = 'Pending' AND tr.scheduled_to < CURDATE() "
+		"THEN DATEDIFF(CURDATE(), tr.scheduled_to) ELSE 0 END AS days_late "
+		"FROM `tabClinic Test Request` tr "
+		"LEFT JOIN `tabEmployee` e ON e.name = tr.employee "
+		"LEFT JOIN `tabJob Offer` jo ON tr.nationa_id IS NOT NULL AND tr.nationa_id != '' "
+		"AND jo.national_id = tr.nationa_id"
+		+ where
+		+ " ORDER BY tr.scheduled_from DESC, tr.name DESC LIMIT 500",
+		params,
+		as_dict=True,
+	)
+	for r in rows:
+		for k in ("scheduled_from", "scheduled_to"):
+			r[k] = str(r[k]) if r.get(k) else ""
+		r["days_late"] = int(r.get("days_late") or 0)
+		r["route"] = _desk_form_route("Clinic Test Request", r["name"])
+		if r.get("linked_test_result"):
+			r["result_route"] = _desk_form_route("Clinic Test Result", r["linked_test_result"])
+
+	out = {"kind": kind, "rows": rows}
+	frappe.response["message"] = out
+	return out
 
 
 @frappe.whitelist()
@@ -2013,8 +2526,31 @@ def test_result_people():
 	params.update(range_params)
 	for key in ("test_package", "member_type"):
 		if data.get(key):
-			clauses.append(f"ctr.{key} = %({key})s")
-			params[key] = data[key]
+			if data[key] == "Unspecified":
+				# The report labels a blank package "Unspecified"; clicking that
+				# row must list the results with no package, not none at all.
+				clauses.append(f"(ctr.{key} IS NULL OR ctr.{key} = '')")
+			else:
+				clauses.append(f"ctr.{key} = %({key})s")
+				params[key] = data[key]
+
+	# A cell of the Condition by Risk Grade grid: the grade lives on the child
+	# Test Result rows, so filter through them without multiplying parents.
+	medical_case = (data.get("medical_case") or "").strip()
+	risk = (data.get("risk") or "").strip()
+	if medical_case or risk:
+		sub = ["t.parent = ctr.name"]
+		if medical_case == "Unspecified":
+			sub.append("(t.test IS NULL OR t.test = '')")
+		elif medical_case:
+			sub.append("t.test = %(medical_case)s")
+			params["medical_case"] = medical_case
+		if risk == "No Risk":
+			sub.append("(t.select_tezd IS NULL OR t.select_tezd = '' OR t.select_tezd = 'No Risk')")
+		elif risk:
+			sub.append("t.select_tezd = %(risk)s")
+			params["risk"] = risk
+		clauses.append("EXISTS (SELECT 1 FROM `tabTest Result` t WHERE " + " AND ".join(sub) + ")")
 
 	outcome = (data.get("outcome") or "").strip()
 	group_by_employee = outcome == "employees"
@@ -2076,10 +2612,19 @@ def test_result_people():
 			as_dict=True,
 		)
 	else:
+		# The grade(s) on the child rows, so a list opened from the risk grid
+		# shows the grade that put each result in that cell.
+		grade_sub = ["tg.parent = ctr.name"]
+		if medical_case and medical_case != "Unspecified":
+			grade_sub.append("tg.test = %(medical_case)s")
+		grade = (
+			"(SELECT GROUP_CONCAT(DISTINCT COALESCE(NULLIF(tg.select_tezd, ''), 'No Risk') SEPARATOR ', ') "
+			"FROM `tabTest Result` tg WHERE " + " AND ".join(grade_sub) + ")"
+		)
 		rows = frappe.db.sql(
 			f"SELECT ctr.name, ctr.employee AS employee, {name} AS employee_name, "
 			f"{ident} AS payroll_number, ctr.member_type, "
-			"ctr.clinical_outcome, ctr.test_package, ctr.creation AS received "
+			f"ctr.clinical_outcome, ctr.test_package, {grade} AS risk_grade, ctr.creation AS received "
 			"FROM `tabClinic Test Result` ctr" + joins
 			+ where
 			+ " ORDER BY ctr.creation DESC LIMIT 500",
@@ -2207,6 +2752,19 @@ def clinic_test_result_report():
 		as_dict=True,
 	)
 
+	rs_year = _where(_year_clauses(clauses))
+	rs_series_rows = frappe.db.sql(
+		"SELECT MONTH(ctr.creation) AS m, COUNT(*) AS total, COUNT(DISTINCT ctr.employee) AS employees, "
+		"SUM(CASE WHEN ctr.clinical_outcome = 'FitForWork' THEN 1 ELSE 0 END) AS fit, "
+		"SUM(CASE WHEN ctr.clinical_outcome = 'FitWithRestrictions' THEN 1 ELSE 0 END) AS restricted, "
+		"SUM(CASE WHEN ctr.clinical_outcome = 'UnfitForWork' THEN 1 ELSE 0 END) AS unfit, "
+		"SUM(CASE WHEN ctr.clinical_outcome = 'InconclusiveRetestRequired' THEN 1 ELSE 0 END) AS retest "
+		"FROM `tabClinic Test Result` ctr" + rs_year + " GROUP BY MONTH(ctr.creation)",
+		params,
+		as_dict=True,
+	)
+	rs_series = _kpi_series(rs_series_rows, ["total", "employees", "fit", "restricted", "unfit", "retest"])
+
 	resp = {
 		"kpis": {
 			"total": total,
@@ -2221,6 +2779,7 @@ def clinic_test_result_report():
 		"by_package": by_package,
 		"by_month": _month_series(by_month),
 		"risk": {"levels": risk_levels, "rows": risk_matrix, "totals": risk_totals},
+		"kpi_series": rs_series,
 		"filter_options": {
 			"years": [str(r.get("yr")) for r in opt_years if r.get("yr")],
 			"months": list(MONTH_LABELS),

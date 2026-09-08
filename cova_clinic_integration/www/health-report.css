@@ -185,7 +185,7 @@ body { background: var(--cdd-cream); }
 .cdd-datefield:hover .cdd-datefield-icon { color: var(--cdd-ink-muted); }
 
 /* ── Link (typeahead) filter ──────────────────────────────────────── */
-.cdd-linkfield { position: relative; display: flex; min-width: 210px; }
+.cdd-linkfield { position: relative; display: flex; }
 .cdd-linkinput {
   width: 100%;
   padding: 8px 26px 8px 10px;
@@ -327,8 +327,11 @@ html, body { height: 100%; overflow: hidden; }
   overflow-y: auto;
   overflow-x: hidden;
   padding-bottom: 36px;
-  scrollbar-gutter: stable;
+  /* The pane still scrolls (wheel, trackpad, keys); its bar is hidden below. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.cdd-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* Header band — the non-scrolling first row of the main column. */
 .cdd-band {
@@ -391,12 +394,15 @@ html, body { height: 100%; overflow: hidden; }
 
 /* Filters */
 .cdd-filters {
-  display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+  /* One line, always: fields share the width and shrink before anything wraps. */
+  display: flex; gap: 12px; flex-wrap: nowrap; align-items: flex-end;
   position: relative; z-index: 30;   /* keeps the calendar popup above the tiles */
   background: var(--cdd-white); border: 1px solid var(--cdd-hairline);
   border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
 }
-.cdd-field { display: flex; flex-direction: column; gap: 5px; min-width: 140px; }
+.cdd-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 0; min-width: 0; }
+.cdd-field label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cdd-field select, .cdd-field .cdd-datefield, .cdd-field .cdd-linkfield { width: 100%; min-width: 0; }
 .cdd-field label {
   font-size: 10px; color: var(--cdd-ink-muted); font-weight: 700;
   text-transform: uppercase; letter-spacing: .06em;
@@ -408,11 +414,13 @@ html, body { height: 100%; overflow: hidden; }
 }
 .cdd-field select:focus { outline: none; border-color: var(--cdd-ink); }
 .cdd-clear {
-  padding: 8px 14px; border: 1px solid var(--cdd-ink); border-radius: 8px;
-  background: var(--cdd-white); color: var(--cdd-ink); font-size: 12px;
-  cursor: pointer; font-weight: 600;
-  transition: background .15s, color .15s;
+  flex: 0 0 auto; width: 36px; height: 36px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--cdd-ink); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink);
+  cursor: pointer; transition: background .15s, color .15s;
 }
+.cdd-clear svg { display: block; }
 .cdd-clear:hover { background: var(--cdd-ink); color: var(--cdd-white); }
 
 /* KPI cards */
@@ -423,9 +431,21 @@ html, body { height: 100%; overflow: hidden; }
   transition: transform .12s, box-shadow .12s, border-color .12s;
 }
 .cdd-kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(17,17,17,0.08); border-color: var(--cdd-ink); }
-.cdd-kpi .v { font-size: 28px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; color: var(--cdd-ink); }
-.cdd-kpi .l { font-size: 12px; color: var(--cdd-ink-muted); margin-top: 8px; font-weight: 500; }
-.cdd-kpi .s { font-size: 11px; color: var(--cdd-ink-faint); margin-top: 3px; }
+/* Title on top, bold, then the figure beneath it. */
+.cdd-kpi .l {
+  font-size: 13px; font-weight: 700; color: var(--cdd-ink); line-height: 1.3;
+  padding-right: 18px;   /* clears the drill corner mark */
+}
+.cdd-kpi .v { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: -0.02em; color: var(--cdd-ink); }
+/* Figure left, chart right, always on one line so every tile's chart sits at
+   the same level. Money is abbreviated (K / M) so it never needs the room. */
+.cdd-kpi-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 10px; flex-wrap: nowrap; }
+.cdd-kpi-row .v { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+.cdd-kpi-trend { flex: 0 0 auto; margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.cdd-spark { display: block; }
+.cdd-kpi-delta {
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 
 /* Drillable tile. Every tile lifts on hover already, so opening a panel needs a
    signal of its own — the pointer, and the number picking up the accent. */
@@ -452,7 +472,52 @@ html, body { height: 100%; overflow: hidden; }
 .cdd-chart-wrap {
   background: var(--cdd-white); border: 1px solid var(--cdd-hairline);
   border-radius: 12px; padding: 18px 20px; height: 360px;
+  position: relative;   /* anchors a corner action button */
 }
+.cdd-chart-action {
+  position: absolute; top: 12px; right: 14px; z-index: 2;
+  padding: 5px 12px; border: 1px solid var(--cdd-ink); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: background .15s, color .15s;
+}
+.cdd-chart-action:hover { background: var(--cdd-ink); color: var(--cdd-white); }
+
+/* Conditions trend: a centred dialog with its own filter bar and one chart. */
+.cdd-trend-modal {
+  position: fixed; inset: 0; z-index: 60; display: none;
+  background: rgba(17,17,17,0.45); padding: 24px;
+  align-items: center; justify-content: center;
+}
+.cdd-trend-modal.is-open { display: flex; }
+.cdd-trend-dialog {
+  width: min(1100px, 100%); height: min(680px, 100%);
+  background: var(--cdd-cream); border-radius: 14px; overflow: visible;
+  display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(17,17,17,0.3);
+}
+.cdd-trend-dialog .cdd-modal-header { background: var(--cdd-white); border-radius: 14px 14px 0 0; }
+.cdd-trend-filters { margin: 16px 20px 0; z-index: 30; }
+.cdd-trend-filters .cdd-trend-year { flex: 0 0 160px; }
+.cdd-trend-filters .cdd-trend-monthfield { flex: 1 1 auto; }
+.cdd-toggles { display: flex; gap: 6px; flex-wrap: nowrap; }
+.cdd-toggles-years .cdd-toggle { flex: 0 0 auto; padding: 8px 18px; }
+.cdd-cond-row { cursor: pointer; }
+#cova-clinic-app tbody tr.cdd-cond-row:hover td.cond,
+#cova-clinic-app tbody tr.cdd-cond-row:focus-visible td.cond { color: var(--cdd-accent); text-decoration: underline; }
+.cdd-toggle {
+  flex: 1 1 0; min-width: 0; padding: 8px 0; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+}
+.cdd-toggle:hover { border-color: var(--cdd-ink); }
+.cdd-toggle.is-on { background: var(--cdd-ink); border-color: var(--cdd-ink); color: var(--cdd-white); }
+.cdd-toggle:focus-visible { outline: 2px solid var(--cdd-accent); outline-offset: 2px; }
+.cdd-trend-status { padding: 10px 24px 0; font-size: 12px; color: var(--cdd-ink-muted); }
+.cdd-trend-body {
+  flex: 1 1 auto; min-height: 0; margin: 10px 20px 20px;
+  background: var(--cdd-white); border: 1px solid var(--cdd-hairline); border-radius: 12px;
+  padding: 18px 20px; position: relative;
+}
+.cdd-trend-body canvas { width: 100% !important; height: 100% !important; }
 
 /* Tables */
 .cdd-section-title { font-size: 14px; font-weight: 700; margin: 0 0 10px; color: var(--cdd-ink); }
@@ -496,10 +561,23 @@ html, body { height: 100%; overflow: hidden; }
 
 /* Employee breakdown modal */
 .cdd-emp-row { cursor: pointer; transition: background .12s; }
+
+/* Test Results tables: any count in the risk grid and every package row opens the list behind it */
+.cdd-result-cell, .cdd-request-cell, .cdd-pkg-row, .cdd-purpose-row { cursor: pointer; }
+#cova-clinic-app tbody tr.cdd-purpose-row:hover td,
+#cova-clinic-app tbody tr.cdd-purpose-row:focus-visible td { background: var(--cdd-accent) !important; color: var(--cdd-white) !important; }
+#cova-clinic-app td.cdd-result-cell:hover,
+#cova-clinic-app td.cdd-result-cell:focus-visible,
+#cova-clinic-app td.cdd-request-cell:hover,
+#cova-clinic-app td.cdd-request-cell:focus-visible {
+  outline: 2px solid var(--cdd-accent); outline-offset: -2px; box-shadow: none;
+}
+#cova-clinic-app tbody tr.cdd-pkg-row:hover td,
+#cova-clinic-app tbody tr.cdd-pkg-row:focus-visible td { background: var(--cdd-accent) !important; color: var(--cdd-white) !important; }
 #cova-clinic-app tbody tr.cdd-emp-row:hover td { background: var(--cdd-accent) !important; color: var(--cdd-white) !important; }
 
 .cdd-modal-overlay {
-  position: fixed; top: 0; right: -400px; bottom: 0; width: 400px;
+  position: fixed; top: 0; right: -460px; bottom: 0; width: 460px;
   background: var(--cdd-white); border-left: 1px solid var(--cdd-hairline);
   box-shadow: -4px 0 16px rgba(17,17,17,0.12);
   z-index: 50; overflow-y: auto; transition: right .2s ease;
@@ -521,6 +599,40 @@ html, body { height: 100%; overflow: hidden; }
 .cdd-modal-body {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 20px 24px;
 }
+/* Punch list: a day header, then one row per visit with in / out / stay. */
+.cdd-punch-day {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin: 18px 0 6px; font-size: 13px; font-weight: 700; color: var(--cdd-ink);
+}
+.cdd-punch-day:first-of-type { margin-top: 4px; }
+.cdd-punch-day span:last-child { font-size: 11px; font-weight: 500; color: var(--cdd-ink-muted); }
+/* Header and rows share one grid so every column lines up; the three time
+   columns are fixed width and right-aligned, the name takes what is left and
+   wraps rather than truncating. */
+.cdd-punch-cols, .cdd-punch-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 52px 52px 62px; gap: 10px; align-items: center;
+}
+.cdd-punch-cols span:not(:first-child), .cdd-punch-row span:not(:first-child) { text-align: right; }
+.cdd-punch-cols {
+  font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--cdd-ink-muted); padding: 4px 0; border-bottom: 1px solid var(--cdd-hairline);
+}
+.cdd-punch-row { padding: 9px 0; border-bottom: 1px solid var(--cdd-hairline); font-size: 13px; }
+/* Grouped lists (per employee / per day): count, in, out, then the span. */
+.cdd-punch-cols-emp, .cdd-punch-row-emp { grid-template-columns: minmax(0, 1fr) 46px 36px 36px 108px; }
+.cdd-punch-cols-emp { margin-top: 4px; }
+.cdd-punch-n { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cdd-punch-who { font-weight: 600; color: var(--cdd-ink); overflow-wrap: anywhere; }
+.cdd-punch-who { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cdd-punch-who a {
+  color: var(--cdd-ink); font-weight: 600; text-decoration: none; line-height: 1.3;
+  overflow-wrap: anywhere;   /* long names wrap onto a second line, never clipped */
+}
+.cdd-punch-who a:hover { color: var(--cdd-accent); }
+.cdd-punch-who small { font-size: 11px; color: var(--cdd-ink-muted); }
+.cdd-punch-t { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cdd-punch-dur { font-variant-numeric: tabular-nums; color: var(--cdd-ink-muted); white-space: nowrap; }
+
 .cdd-modal-empty {
   text-align: center; padding: 40px 20px;
   font-size: 13px; color: var(--cdd-ink-muted);
@@ -621,7 +733,6 @@ a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
    (Firefox), leaving Chrome and Safari on the 6px rule below. */
 
 @supports not selector(::-webkit-scrollbar) {
-  .cdd-scroll,
   .cdd-rail,
   .cdd-rail-nav,
   .cdd-table-wrap,
@@ -631,7 +742,6 @@ a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
   }
 }
 
-.cdd-scroll::-webkit-scrollbar,
 .cdd-rail::-webkit-scrollbar,
 .cdd-rail-nav::-webkit-scrollbar,
 .cdd-table-wrap::-webkit-scrollbar,
@@ -640,7 +750,6 @@ a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
   height: 6px;
 }
 
-.cdd-scroll::-webkit-scrollbar-track,
 .cdd-rail::-webkit-scrollbar-track,
 .cdd-rail-nav::-webkit-scrollbar-track,
 .cdd-table-wrap::-webkit-scrollbar-track,
@@ -648,7 +757,6 @@ a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
   background: transparent;
 }
 
-.cdd-scroll::-webkit-scrollbar-thumb,
 .cdd-rail::-webkit-scrollbar-thumb,
 .cdd-rail-nav::-webkit-scrollbar-thumb,
 .cdd-table-wrap::-webkit-scrollbar-thumb,
@@ -657,7 +765,6 @@ a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
   border-radius: 3px;
 }
 
-.cdd-scroll::-webkit-scrollbar-thumb:hover,
 .cdd-rail::-webkit-scrollbar-thumb:hover,
 .cdd-rail-nav::-webkit-scrollbar-thumb:hover,
 .cdd-table-wrap::-webkit-scrollbar-thumb:hover,
