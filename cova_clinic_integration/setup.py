@@ -143,13 +143,31 @@ CLINIC_FIELDS = {
 
 
 def _save_standard_doctype(dt):
+	"""Save an edited standard (custom=0) DocType from anywhere, developer_mode
+	on or off.
+
+	Two flags do the work, and they are set for the duration of the save only:
+
+	  * ``in_import`` permits the save without exporting the doctype back to
+	    disk, so the owning app's JSON (erpnext/employee.json, hrms/job_offer.json)
+	    is never rewritten by a site;
+	  * ``in_patch`` is the exemption ``DocType.check_developer_mode()`` itself
+	    honours. Without it a production site (developer_mode off, which is every
+	    Frappe Cloud site) throws CannotCreateStandardDoctypeError, and this app
+	    exists to install normal DocFields — not Custom Fields — so the fields
+	    would simply never appear. It is the same context the app's own patches
+	    already call these installers in.
+	"""
 	prev_in_import = frappe.flags.in_import
+	prev_in_patch = frappe.flags.in_patch
 	frappe.flags.in_import = True
+	frappe.flags.in_patch = True
 	try:
 		dt.flags.ignore_permissions = True
 		dt.save()
 	finally:
 		frappe.flags.in_import = prev_in_import
+		frappe.flags.in_patch = prev_in_patch
 
 
 def _position(dt, row, insert_after):
@@ -170,16 +188,10 @@ def install_clinic_fields():
 	If a field already exists as a Custom Field record, it is converted: the
 	Custom Field record is deleted and the same fieldname is re-added as a
 	normal DocField. The physical column is left in place across the swap, so
-	existing data is preserved."""
-	# DocType.check_developer_mode() exempts patches, and patch_handler forces
-	# conf.developer_mode to 0 while a patch runs — so trust in_patch over conf.
-	if not frappe.conf.get("developer_mode") and not frappe.flags.in_patch:
-		frappe.log_error(
-			title="COVA install_clinic_fields skipped",
-			message="developer_mode is off; cannot add normal fields to standard doctypes.",
-		)
-		return
+	existing data is preserved.
 
+	Runs on any site: the save goes through `_save_standard_doctype`, which
+	carries its own exemption from the developer_mode wall."""
 	for doctype, specs in CLINIC_FIELDS.items():
 		fieldnames = [s["fieldname"] for s in specs]
 
@@ -271,16 +283,9 @@ def _connection_key(row):
 def install_clinic_links():
 	"""Add the integration's Connections to the standard doctypes (idempotent).
 
-	Same constraint as install_clinic_fields: editing a standard doctype needs
-	developer_mode, and the save runs under frappe.flags.in_import so the owning
-	app's JSON on disk is not rewritten."""
-	if not frappe.conf.get("developer_mode") and not frappe.flags.in_patch:
-		frappe.log_error(
-			title="COVA install_clinic_links skipped",
-			message="developer_mode is off; cannot add connections to standard doctypes.",
-		)
-		return
-
+	Saved the same way as install_clinic_fields, through
+	`_save_standard_doctype`, so it too works with developer_mode off and leaves
+	the owning app's JSON on disk alone."""
 	for doctype, specs in CLINIC_CONNECTIONS.items():
 		dt = frappe.get_doc("DocType", doctype)
 		existing = {_connection_key(row.as_dict()): row for row in dt.links}
@@ -313,9 +318,6 @@ def install_clinic_links():
 
 def uninstall_clinic_links():
 	"""Drop the integration's Connections again on uninstall."""
-	if not frappe.conf.get("developer_mode"):
-		return
-
 	for doctype, specs in CLINIC_CONNECTIONS.items():
 		wanted = {_connection_key(spec) for spec in specs}
 		dt = frappe.get_doc("DocType", doctype)
@@ -401,9 +403,6 @@ def before_uninstall():
 
 def uninstall_clinic_fields():
 	"""Remove the integration's fields (and their columns) on uninstall."""
-	if not frappe.conf.get("developer_mode"):
-		return
-
 	for doctype, specs in CLINIC_FIELDS.items():
 		fieldnames = {s["fieldname"] for s in specs}
 		dt = frappe.get_doc("DocType", doctype)
@@ -500,8 +499,8 @@ def before_tests():
 
 	  * a Company and the Gender records — every Employee fixture needs both,
 	    and both are laid down by the setup wizard, not by installing ERPNext;
-	  * this app's fields and Connections on Employee/Job Offer, which
-	    ``after_install`` only writes when developer_mode is on.
+	  * this app's fields and Connections on Employee/Job Offer, which no bare
+	    site carries until ``after_install`` writes them.
 
 	``after_install`` is idempotent, so re-running it here just asserts the
 	wiring is present rather than installing it a second time.

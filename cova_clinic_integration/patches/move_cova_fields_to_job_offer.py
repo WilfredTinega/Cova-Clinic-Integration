@@ -53,7 +53,7 @@ def execute():
 	}
 
 	if len(movable) < len([fn for fn in MOVED_FIELDS if fn in ja_columns]):
-		# Job Offer did not get every field (developer_mode off, most likely).
+		# Job Offer did not get every field (a save on the doctype failed).
 		# Leave Job Applicant alone rather than dropping data with nowhere to go.
 		frappe.log_error(
 			title="COVA move to Job Offer skipped",

@@ -136,6 +136,16 @@
   // down thirteen columns costs width and buys nothing.
   var CURRENCY = '';
 
+  // Tile-sized money: K from ten thousand, M from a million, exact below that.
+  // The exact figure rides along as the tile's tooltip.
+  function cashShort(v) {
+    var n = Number(v || 0), abs = Math.abs(n), sign = n < 0 ? '-' : '';
+    if (abs >= 1e6) { return CURRENCY + ' ' + sign + trimNum(abs / 1e6, 2) + 'M'; }
+    if (abs >= 1e4) { return CURRENCY + ' ' + sign + trimNum(abs / 1e3, 1) + 'K'; }
+    return cash(v);
+  }
+  function trimNum(n, d) { return String(Number(n.toFixed(d))); }
+
   function cash(v) {
     return CURRENCY ? CURRENCY + ' ' + money(v) : money(v);
   }
@@ -386,6 +396,57 @@
   // A tile carrying `drill` becomes a button that opens the panel listing the
   // records behind its number. A tile showing zero is left inert — there is
   // nothing to look at, and a click that opens an empty panel reads as a fault.
+  // Which month a tile's trend is judged at: the month filter if one is set,
+  // otherwise the latest month in the series with anything in it.
+  function trendIndex(series) {
+    if (globalValues.month) {
+      var mi = MONTH_LABELS.indexOf(globalValues.month);
+      if (mi >= 0) { return mi; }
+    }
+    for (var i = series.length - 1; i >= 0; i--) { if (series[i]) { return i; } }
+    return -1;
+  }
+
+  // A small area chart of the year by month plus an up/down badge against
+  // the previous month. Colour follows direction, the same on every tile:
+  // an increase is red, a decrease green, no change grey.
+  function kpiTrend(series) {
+    if (!series || !series.length) { return ''; }
+    var idx = trendIndex(series);
+    if (idx < 0) { return ''; }
+    var cur = Number(series[idx]) || 0;
+    var prev = idx > 0 ? Number(series[idx - 1]) || 0 : null;
+
+    var dir = prev === null ? 'flat' : (cur > prev ? 'up' : (cur < prev ? 'down' : 'flat'));
+    var color = dir === 'up' ? '#e34948' : dir === 'down' ? '#1baf7a' : '#898781';
+
+    var W = 84, H = 30, PAD = 2;
+    var max = Math.max.apply(null, series.map(Number)) || 1;
+    var step = (W - 2 * PAD) / (series.length - 1);
+    var pts = series.map(function (v, i) {
+      var x = PAD + i * step;
+      var y = H - PAD - ((Number(v) || 0) / max) * (H - 2 * PAD - 4);
+      return [x.toFixed(1), y.toFixed(1)];
+    });
+    var line = pts.map(function (p) { return p.join(','); }).join(' ');
+    var area = 'M' + pts[0][0] + ',' + (H - PAD) + ' L' + pts.map(function (p) { return p.join(','); }).join(' L') +
+               ' L' + pts[pts.length - 1][0] + ',' + (H - PAD) + ' Z';
+    var spark = '<svg class="cdd-spark" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" aria-hidden="true">' +
+                '<path d="' + area + '" fill="' + color + '" fill-opacity="0.14"/>' +
+                '<polyline fill="none" stroke="' + color + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" points="' + line + '"/>' +
+                '<line x1="' + PAD + '" y1="' + (H - PAD) + '" x2="' + (W - PAD) + '" y2="' + (H - PAD) + '" stroke="' + color + '" stroke-opacity="0.35" stroke-width="1"/>' +
+                '<circle cx="' + pts[idx][0] + '" cy="' + pts[idx][1] + '" r="2.6" fill="' + color + '"/></svg>';
+
+    var badge = '';
+    if (prev !== null && (cur || prev)) {
+      var text = dir === 'flat' ? '0%'
+        : (prev ? Math.round(Math.abs(cur - prev) / prev * 100) + '%' : 'new');
+      badge = '<span class="cdd-kpi-delta" style="color:' + color + '" title="vs ' + MONTH_LABELS[idx - 1] + '">' +
+              (dir === 'up' ? '\u25b2' : dir === 'down' ? '\u25bc' : '\u25ac') + ' ' + text + '</span>';
+    }
+    return '<div class="cdd-kpi-trend">' + spark + badge + '</div>';
+  }
+
   function kpiBlock(tiles) {
     var h = '<div class="cdd-kpis">';
     tiles.forEach(function (t) {
@@ -395,18 +456,28 @@
       h += '<div class="cdd-kpi' + (live ? ' cdd-kpi-drill' : '') + '"' +
            (live ? ' data-drill="' + esc(t.drill) + '" data-drill-label="' + esc(t.l) + '"' +
                    ' role="button" tabindex="0" title="Show the people behind this"' : '') +
-           '><div class="v">' + esc(t.v) + '</div>' +
-           '<div class="l">' + esc(t.l) + '</div>' +
-           (t.s ? '<div class="s">' + esc(t.s) + '</div>' : '') +
+           // Title first, then the figure with its trend beside it.
+           '><div class="l">' + esc(t.l) + '</div>' +
+           '<div class="cdd-kpi-row"><div class="v"' + (t.full ? ' title="' + esc(t.full) + '"' : '') + '>' + esc(t.v) + '</div>' +
+           kpiTrend(t.series) + '</div>' +
            '</div>';
     });
     return h + '</div>';
   }
 
+  // Each entry is a canvas id, or {id, action: {label, action}} for a chart
+  // with a button in its corner (wired by wireChartActions after render).
   function chartRow(ids, single) {
     var h = '<div class="cdd-charts-row' + (single ? ' is-single' : '') + '">';
-    ids.forEach(function (id) {
-      h += '<div class="cdd-chart-wrap"><canvas id="' + id + '"></canvas></div>';
+    ids.forEach(function (c) {
+      var id = typeof c === 'string' ? c : c.id;
+      var action = typeof c === 'string' ? null : c.action;
+      h += '<div class="cdd-chart-wrap">' +
+           (action
+             ? '<button type="button" class="cdd-chart-action" data-action="' + esc(action.action) + '">' +
+               esc(action.label) + '</button>'
+             : '') +
+           '<canvas id="' + id + '"></canvas></div>';
     });
     return h + '</div>';
   }
@@ -582,6 +653,24 @@
     // cfg.series draws grouped bars (e.g. checked in vs checked out); a bare
     // cfg.values is the single-series case.
     var multi = cfg.series && cfg.series.length > 1;
+    // The value axis never lets a tiny maximum fill the whole chart: a count
+    // of 1 gets a 0–5 axis with unit ticks instead of one bar spanning it all.
+    var peak = 0;
+    (cfg.series ? cfg.series : [{ values: cfg.values || [] }]).forEach(function (sx) {
+      (sx.values || []).forEach(function (v) { if (Number(v) > peak) { peak = Number(v); } });
+    });
+    var valueAxis = {
+      beginAtZero: true, grid: { color: GRID },
+      ticks: { precision: 0, color: AXIS_TEXT }
+    };
+    if (peak <= 5) {
+      valueAxis.suggestedMax = 5;
+      valueAxis.ticks.stepSize = 1;
+    } else if (peak <= 10) {
+      valueAxis.suggestedMax = 10;
+      valueAxis.ticks.stepSize = 1;
+    }
+
     var datasets = cfg.series
       ? cfg.series.map(function (sx, i) {
           return {
@@ -631,11 +720,11 @@
         },
         scales: {
           x: horizontal
-            ? { beginAtZero: true, grid: { color: GRID }, ticks: { precision: 0, color: AXIS_TEXT } }
+            ? valueAxis
             : { grid: { display: false }, ticks: { color: AXIS_TEXT, maxRotation: 0, autoSkip: true } },
           y: horizontal
             ? { grid: { display: false }, ticks: { color: AXIS_TEXT } }
-            : { beginAtZero: true, grid: { color: GRID }, ticks: { precision: 0, color: AXIS_TEXT } }
+            : valueAxis
         }
       }
     }));
@@ -659,9 +748,11 @@
         tension: 0.35,
         pointRadius: 4,
         pointHoverRadius: 6,
-        // 2px surface ring so overlapping markers stay separable.
-        pointBorderColor: SURFACE,
-        pointBorderWidth: 2,
+        // Solid markers: no ring around the point.
+        pointBackgroundColor: stroke,
+        pointBorderColor: stroke,
+        pointBorderWidth: 0,
+        pointHoverBorderWidth: 0,
         borderWidth: 2
       };
     });
@@ -691,11 +782,12 @@
         },
         interaction: { mode: 'index', intersect: false },
         scales: {
-          x: { grid: { display: false }, ticks: { color: AXIS_TEXT } },
+          x: { grid: { display: false }, ticks: Object.assign({ color: AXIS_TEXT }, cfg.xTicks || {}) },
           y: { beginAtZero: true, grid: { color: GRID }, ticks: { precision: 0, color: AXIS_TEXT } }
         }
       }
     }));
+    return charts[charts.length - 1];
   }
 
   // ── view descriptors ──────────────────────────────────────────────
@@ -705,10 +797,8 @@
     health: {
       title: 'Disease & Health Monthly Report',
       url: '/api/method/clinic_disease_report',
-      filters: [
-        { key: 'posting_date', label: 'Posting Date', src: 'posting_dates', all: 'All' },
-        { key: 'medical_case', label: 'Medical Case', src: 'medical_cases', all: 'All' }
-      ],
+      drill: function (kind, label) { openHealthModal(kind, label); },
+      filters: [],
       render: function (d) {
         var months = d.months || [];
         var rows = d.rows || [];
@@ -719,7 +809,8 @@
         });
 
         var body = rows.map(function (r) {
-          var h = '<tr><td class="cond">' + esc(r.condition) + '</td>';
+          var h = '<tr class="cdd-cond-row" data-condition="' + esc(r.condition) + '" tabindex="0" role="button">' +
+                  '<td class="cond">' + esc(r.condition) + '</td>';
           r.cells.forEach(function (c) {
             h += '<td class="heat" style="background:' + heatBg(c, maxCell) +
                  ';color:' + heatFg(c, maxCell) + '">' + (c || '') + '</td>';
@@ -735,13 +826,15 @@
             'total-row'));
         }
 
+        // drill values are the `kind` disease_report_detail lists.
+        var S = d.kpi_series || {};
         return kpiBlock([
-          { v: num(d.grand_total), l: 'Total Encounters' },
-          { v: num(d.condition_count), l: 'Conditions Tracked' },
-          { v: num(d.monthly_average), l: 'Monthly Average' },
-          { v: months.length, l: 'Months Reported' }
+          { v: num(d.grand_total), l: 'Total Encounters', drill: 'total', series: S.total },
+          { v: num(d.condition_count), l: 'Conditions Tracked', drill: 'conditions', series: S.conditions },
+          { v: num(d.monthly_average), l: 'Monthly Average', drill: 'average', series: S.total },
+          { v: months.length, l: 'Months Reported', drill: 'months', series: S.months_reported }
         ]) +
-          chartRow(['c-top', 'c-trend']) +
+          chartRow([{ id: 'c-top', action: { label: 'Trend', action: 'trend' } }, 'c-trend']) +
           tableBlock('Conditions by Month',
             ['Condition'].concat(months).concat(['Total', 'Share', 'Avg']), body,
             { empty: 'No data for the selected filters' });
@@ -777,6 +870,9 @@
       url: CHECKIN_URL,
       pick: function (res) { return res.biometric || {}; },
       filters: [],
+      // Footfall is a daily question: the From/To range opens on today.
+      dateDefault: 'today',
+      drill: function (kind, label) { openPunchModal(kind, label); },
       render: function (d) {
         var k = d.kpis || {};
         var body = (d.top_employees || []).map(function (r) {
@@ -784,13 +880,15 @@
             [r.payroll_number || '', r.in_punches, r.out_punches, r.visits,
              r.first_in || '', r.last_out || '']);
         });
+        // drill values are the `kind` clinic_punch_people lists.
+        var S = d.kpi_series || {};
         return kpiBlock([
-          { v: num(k.punches), l: 'Total Punches' },
-          { v: num(k.employees), l: 'Unique Employees' },
-          { v: num(k.in_punches), l: 'Checked In' },
-          { v: num(k.out_punches), l: 'Checked Out' },
-          { v: num(k.days), l: 'Days with Visits' },
-          { v: num(k.avg_per_day), l: 'Avg Punches / Day' }
+          { v: num(k.punches), l: 'Total Punches', drill: '', series: S.punches },
+          { v: num(k.employees), l: 'Unique Employees', drill: 'employees', series: S.employees },
+          { v: num(k.in_punches), l: 'Checked In', drill: 'IN', series: S.in_punches },
+          { v: num(k.out_punches), l: 'Checked Out', drill: 'OUT', series: S.out_punches },
+          { v: num(k.days), l: 'Days with Visits', drill: 'days', series: S.days },
+          { v: num(k.avg_per_day), l: 'Avg Punches / Day', series: S.avg_per_day }
         ]) +
           chartRow(['c-bio-month', 'c-bio-hour']) +
           chartRow(['c-bio-emp'], true) +
@@ -843,24 +941,23 @@
       url: CHECKIN_URL,
       pick: function (res) { return res.sick_off || {}; },
       filters: [],
+      drill: function (kind, label) { openSickOffModal(kind, label); },
       render: function (d) {
         var k = d.kpis || {};
         var body = (d.top_employees || []).map(function (r) {
           return row(r.employee_name || r.employee,
             [r.payroll_number || '', r.episodes, r.days]);
         });
-        var note = num(k.without_leave)
-          ? '<div class="cdd-note">' + num(k.without_leave) +
-            ' sick-off record(s) have no linked Leave Application — usually a missing sick-leave allocation for the employee.</div>'
-          : '';
+        // drill values are the `kind` sick_off_people lists.
+        var S = d.kpi_series || {};
         return kpiBlock([
-          { v: num(k.records), l: 'Sick-Off Records' },
-          { v: num(k.employees), l: 'Employees' },
-          { v: num(k.days), l: 'Sick Days' },
-          { v: num(k.with_leave), l: 'Leave Applications', s: num(k.leave_rate) + '% linked' },
-          { v: num(k.without_leave), l: 'Missing Leave' },
-          { v: num(k.avg_days), l: 'Avg Days / Episode' }
-        ]) + note +
+          { v: num(k.records), l: 'Sick-Off Records', drill: '', series: S.records },
+          { v: num(k.employees), l: 'Employees', drill: 'employees', series: S.employees },
+          { v: num(k.days), l: 'Sick Days', drill: 'days', series: S.days },
+          { v: num(k.with_leave), l: 'Leave Applications', drill: 'with_leave', series: S.with_leave },
+          { v: num(k.without_leave), l: 'Missing Leave', drill: 'without_leave', series: S.without_leave },
+          { v: num(k.avg_days), l: 'Avg Days / Episode', series: S.avg_days }
+        ]) +
           chartRow(['c-so-month', 'c-so-dur']) +
           tableBlock('Most Sick Days',
             ['Employee', 'Payroll No.', 'Episodes', 'Sick Days'], body,
@@ -890,19 +987,18 @@
       title: 'Employee Visits & Cost',
       subtitle: 'What visits cost and what benefit cover is left',
       url: VISIT_URL,
-      filters: [
-        { key: 'employee', label: 'Employee', type: 'link', src: 'employees',
-          all: 'All employees' }
-      ],
+      filters: [],
       render: function (d) {
         var k = d.kpis || {};
         var purposes = d.by_purpose || [];
         var maxCost = 0;
         purposes.forEach(function (p) { if (p.cost > maxCost) { maxCost = p.cost; } });
 
+        // Each purpose row opens who that spend went to.
         var purposeBody = purposes.map(function (p) {
           var w = maxCost ? Math.max(4, (p.cost / maxCost) * 48) : 0;
-          return '<tr><td class="cond">' + esc(p.purpose) + '</td>' +
+          return '<tr class="cdd-purpose-row" data-purpose="' + esc(p.purpose) + '" tabindex="0" role="button">' +
+                 '<td class="cond">' + esc(p.purpose) + '</td>' +
                  '<td>' + p.items + '</td>' +
                  '<td><b>' + cash(p.cost) + '</b></td>' +
                  '<td><span class="pct-bar" style="width:' + w + 'px;"></span>' + p.percent + '%</td></tr>';
@@ -925,18 +1021,18 @@
         // so load() refetches it with the year alone and swaps it in below.
         var grid = d.cost_by_employee_full_year || d.cost_by_employee;
 
-        var asAt = k.balance_month ? 'as at ' + k.balance_month : '';
         var balanceTiles = (d.balances_latest || []).map(function (b) {
-          return { v: cash(b.value), l: b.label, s: asAt };
+          return { v: cashShort(b.value), full: cash(b.value), l: b.label };
         });
 
+        var S = d.kpi_series || {};
         return kpiBlock([
-          { v: num(k.visits), l: 'Visits' },
-          { v: num(k.employees), l: 'Employees Seen' },
-          { v: cash(k.cost), l: 'Total Cost' },
-          { v: cash(k.avg_cost), l: 'Avg Cost / Visit' },
-          { v: cash(k.cost_per_employee), l: 'Cost / Employee' },
-          { v: cash(k.balance_total), l: 'Benefit Left — All', s: asAt }
+          { v: num(k.visits), l: 'Visits', series: S.visits },
+          { v: num(k.employees), l: 'Employees Seen', series: S.employees },
+          { v: cashShort(k.cost), full: cash(k.cost), l: 'Total Cost', series: S.cost },
+          { v: cashShort(k.avg_cost), full: cash(k.avg_cost), l: 'Avg Cost / Visit', series: S.avg_cost },
+          { v: cashShort(k.cost_per_employee), full: cash(k.cost_per_employee), l: 'Cost / Employee', series: S.cost_per_employee },
+          { v: cashShort(k.balance_total), full: cash(k.balance_total), l: 'Benefit Left — All' }
         ]) +
           (balanceTiles.length
             ? '<div class="cdd-section-title">Benefit Balances</div>' + kpiBlock(balanceTiles)
@@ -1013,6 +1109,7 @@
     requests: {
       title: 'Test Requests',
       url: REQUEST_URL,
+      drill: function (kind, label) { openRequestsModal(kind, label); },
       filters: [
         { key: 'status', label: 'Status', src: 'statuses', all: 'All' },
         { key: 'test_package', label: 'Test Package', src: 'test_packages', all: 'All' },
@@ -1024,26 +1121,55 @@
         var maxTotal = 0;
         pkgs.forEach(function (p) { if (p.total > maxTotal) { maxTotal = p.total; } });
 
-        var pkgBody = pkgs.map(function (p) {
-          var h = '<tr><td class="cond">' + esc(p.test_package || 'Unspecified') + '</td>';
-          [p.pending, p.completed, p.cancelled].forEach(function (c) {
-            h += '<td class="heat" style="background:' + heatBg(c, maxTotal) +
-                 ';color:' + heatFg(c, maxTotal) + '">' + (c || '') + '</td>';
+        // Every filled count opens the requests behind it: a cell is one
+        // package at one status, the row total is the package at any status.
+        function reqCell(count, attrs, cls, style) {
+          if (!count) { return '<td class="' + cls + '"' + (style || '') + '></td>'; }
+          var a = '';
+          Object.keys(attrs).forEach(function (k) {
+            if (attrs[k]) { a += ' data-' + k + '="' + esc(String(attrs[k])) + '"'; }
           });
-          return h + '<td><b>' + p.total + '</b></td><td>' + p.completion_rate + '%</td></tr>';
+          return '<td class="' + cls + ' cdd-request-cell"' + a + (style || '') +
+                 ' tabindex="0" role="button">' + count + '</td>';
+        }
+        var statuses = ['Pending', 'Completed', 'Cancelled'];
+        var pkgBody = pkgs.map(function (p) {
+          var pkg = p.test_package || 'Unspecified';
+          var h = '<tr><td class="cond">' + esc(pkg) + '</td>';
+          [p.pending, p.completed, p.cancelled].forEach(function (c, i) {
+            h += reqCell(c, { pkg: pkg, status: statuses[i], label: statuses[i] + ' — ' + pkg }, 'heat',
+              ' style="background:' + heatBg(c, maxTotal) + ';color:' + heatFg(c, maxTotal) + '"');
+          });
+          h += reqCell(p.total, { pkg: pkg, label: pkg }, 'cdd-result-total')
+                 .replace('>' + p.total + '</td>', '><b>' + p.total + '</b></td>');
+          return h + '<td>' + p.completion_rate + '%</td></tr>';
         });
+        if (pkgBody.length) {
+          var sum = function (k) { return pkgs.reduce(function (a, p) { return a + (p[k] || 0); }, 0); };
+          var t = '<tr class="total-row"><td class="cond">TOTAL</td>';
+          ['pending', 'completed', 'cancelled'].forEach(function (k, i) {
+            t += reqCell(sum(k), { status: statuses[i], label: statuses[i] + ' — all packages' }, '');
+          });
+          var all = sum('total');
+          t += reqCell(all, { label: 'All requests' }, '') +
+               '<td>' + (all ? Math.round((sum('completed') * 1000) / all) / 10 : 0) + '%</td></tr>';
+          pkgBody.push(t);
+        }
 
         var overdue = (d.overdue_rows || []).map(function (r) {
           return row(r.who || r.name, [r.name, r.test_package || '', r.member_type || '',
             r.scheduled_to || '', r.days_late]);
         });
 
+        // drill values are what test_request_people filters on: a status,
+        // "overdue", or "" for every request.
+        var S = d.kpi_series || {};
         return kpiBlock([
-          { v: num(k.total), l: 'Total Requests' },
-          { v: num(k.pending), l: 'Pending' },
-          { v: num(k.completed), l: 'Completed', s: num(k.completion_rate) + '% of total' },
-          { v: num(k.cancelled), l: 'Cancelled' },
-          { v: num(k.overdue), l: 'Overdue', s: 'pending past scheduled-to' }
+          { v: num(k.total), l: 'Total Requests', drill: '', series: S.total },
+          { v: num(k.pending), l: 'Pending', drill: 'Pending', series: S.pending },
+          { v: num(k.completed), l: 'Completed', drill: 'Completed', series: S.completed },
+          { v: num(k.cancelled), l: 'Cancelled', drill: 'Cancelled', series: S.cancelled },
+          { v: num(k.overdue), l: 'Overdue', drill: 'overdue', series: S.overdue }
         ]) +
           chartRow(['c-rq-month', 'c-rq-pkg']) +
           tableBlock('Packages by Status',
@@ -1092,33 +1218,58 @@
           r.cells.forEach(function (c) { if (c > maxCell) { maxCell = c; } });
         });
 
+        // Every filled count opens the list behind it: a cell is one
+        // condition at one grade, a row total is the condition at any grade,
+        // a TOTAL-row cell is the grade across conditions.
+        function drillCell(count, attrs, cls, style) {
+          if (!count) { return '<td class="' + cls + '"' + (style || '') + '></td>'; }
+          var a = '';
+          Object.keys(attrs).forEach(function (k) {
+            if (attrs[k] !== undefined && attrs[k] !== null) {
+              a += ' data-' + k + '="' + esc(String(attrs[k])) + '"';
+            }
+          });
+          return '<td class="' + cls + ' cdd-result-cell"' + a + (style || '') +
+                 ' tabindex="0" role="button">' + count + '</td>';
+        }
+
+        var levels = risk.levels || [];
         var riskBody = (risk.rows || []).map(function (r) {
           var h = '<tr><td class="cond">' + esc(r.medical_case) + '</td>';
-          r.cells.forEach(function (c) {
-            h += '<td class="heat" style="background:' + heatBg(c, maxCell) +
-                 ';color:' + heatFg(c, maxCell) + '">' + (c || '') + '</td>';
+          r.cells.forEach(function (c, i) {
+            h += drillCell(c, { 'case': r.medical_case, risk: levels[i],
+              label: levels[i] + ' — ' + r.medical_case }, 'heat',
+              ' style="background:' + heatBg(c, maxCell) + ';color:' + heatFg(c, maxCell) + '"');
           });
-          return h + '<td><b>' + r.total + '</b></td></tr>';
+          return h + drillCell(r.total, { 'case': r.medical_case, label: r.medical_case },
+            'cdd-result-total').replace('>' + r.total + '</td>', '><b>' + r.total + '</b></td>') + '</tr>';
         });
         if (riskBody.length) {
           var grand = (risk.totals || []).reduce(function (a, b) { return a + b; }, 0);
-          riskBody.push(row('TOTAL', (risk.totals || []).concat([grand]), 'total-row'));
+          var t = '<tr class="total-row"><td class="cond">TOTAL</td>';
+          (risk.totals || []).forEach(function (c, i) {
+            t += drillCell(c, { risk: levels[i], label: levels[i] + ' — all conditions' }, '');
+          });
+          t += drillCell(grand, { label: 'All graded results' }, '') + '</tr>';
+          riskBody.push(t);
         }
 
         var pkgBody = (d.by_package || []).map(function (p) {
-          return row(p.test_package, [p.cnt]);
+          return '<tr class="cdd-pkg-row" data-package="' + esc(p.test_package) + '"' +
+                 ' data-label="' + esc(p.test_package) + '" tabindex="0" role="button">' +
+                 '<td class="cond">' + esc(p.test_package) + '</td><td>' + esc(p.cnt) + '</td></tr>';
         });
 
         // drill values are what the endpoint filters on: a clinical outcome,
         // "employees" for the distinct-employee tile, or "" for every result.
+        var S = d.kpi_series || {};
         return kpiBlock([
-          { v: num(k.total), l: 'Results Received', drill: '' },
-          { v: num(k.employees), l: 'Employees', drill: 'employees' },
-          { v: num(k.fit), l: 'Fit for Work', s: num(k.fit_rate) + '% of results',
-            drill: 'FitForWork' },
-          { v: num(k.restricted), l: 'Fit with Restrictions', drill: 'FitWithRestrictions' },
-          { v: num(k.unfit), l: 'Unfit for Work', drill: 'UnfitForWork' },
-          { v: num(k.retest), l: 'Retest Required', drill: 'InconclusiveRetestRequired' }
+          { v: num(k.total), l: 'Results Received', drill: '', series: S.total },
+          { v: num(k.employees), l: 'Employees', drill: 'employees', series: S.employees },
+          { v: num(k.fit), l: 'Fit for Work', drill: 'FitForWork', series: S.fit },
+          { v: num(k.restricted), l: 'Fit with Restrictions', drill: 'FitWithRestrictions', series: S.restricted },
+          { v: num(k.unfit), l: 'Unfit for Work', drill: 'UnfitForWork', series: S.unfit },
+          { v: num(k.retest), l: 'Retest Required', drill: 'InconclusiveRetestRequired', series: S.retest }
         ]) +
           chartRow(['c-rs-outcome', 'c-rs-month']) +
           tableBlock('Condition by Risk Grade',
@@ -1256,7 +1407,13 @@
       viewFilterHtml += '</div>';
     });
 
-    h = globalFilterHtml + viewFilterHtml + '<button class="cdd-clear" id="cdd-clear">Clear Filters</button>';
+    // An icon-only reset; the label lives in the tooltip and for screen readers.
+    h = globalFilterHtml + viewFilterHtml +
+        '<button class="cdd-clear" id="cdd-clear" type="button" title="Clear filters" aria-label="Clear filters">' +
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M6 6l12 12M18 6L6 18"/>' +
+        '</svg></button>';
     wrap.innerHTML = h;
 
     // Smart date-month sync: if month is set, auto-fill from/to dates; if dates
@@ -1419,6 +1576,8 @@
       wireCostCells();
       wireGridSort();
       wireKpiDrill();
+      wireResultDrill();
+      wireChartActions();
 
       el('cdd-loading').style.display = 'none';
       ensureChartJs(function () {
@@ -1442,6 +1601,17 @@
     resetScroll();
     el('cdd-view').innerHTML = '';
     var v = VIEWS[view];
+    // A From/To range belongs to the tab it was picked on: every tab opens
+    // with the range cleared. Year and month carry across.
+    globalValues.from_date = '';
+    globalValues.to_date = '';
+    // A view can open on today's date, unless a month narrows it already.
+    // Clear Filters still widens back to the whole year.
+    if (v.dateDefault === 'today' && !globalValues.month) {
+      var today = toIso(new Date());
+      globalValues.from_date = today;
+      globalValues.to_date = today;
+    }
     if (v.optionsLoaded) {
       buildFilters(view, (v.raw || {}).filter_options || {});
     } else {
@@ -1527,7 +1697,9 @@
   }
 
   // The people behind one Test Results tile, in the same right-hand panel.
-  function openResultsModal(outcome, label) {
+  // `extra` narrows further for the two tables: {medical_case, risk} for a
+  // cell of the risk grid, {test_package} for a Results by Package row.
+  function openResultsModal(outcome, label, extra) {
     empModalTitle.textContent = label;
     empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
     empModal.classList.add('is-open');
@@ -1535,7 +1707,10 @@
     // The same filter set the tile was computed from, or the list would not
     // match the number that was clicked.
     var filters = filterValues('results');
-    filters.outcome = outcome;
+    filters.outcome = outcome || '';
+    Object.keys(extra || {}).forEach(function (k) {
+      if (extra[k]) { filters[k] = extra[k]; }
+    });
 
     post('/api/method/cova_clinic_integration.api.test_result_people', filters)
       .then(function (res) {
@@ -1571,6 +1746,7 @@
           } else if (r.clinical_outcome) {
             meta.push(esc(r.clinical_outcome));
           }
+          if (r.risk_grade) { meta.push(esc(r.risk_grade)); }
 
           // The date wears the outcome's status colour, the same one the
           // Clinical Outcomes chart uses, so a scan down the panel reads the
@@ -1596,13 +1772,680 @@
       });
   }
 
+  // The two Test Results tables: a count in the risk grid, or a package row.
+  function wireResultDrill() {
+    var host = el('cdd-view');
+    if (!host) { return; }
+
+    function bind(node, open) {
+      node.addEventListener('click', function (e) { e.stopPropagation(); open(); });
+      node.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); open(); }
+      });
+    }
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-result-cell'), function (cell) {
+      bind(cell, function () {
+        openResultsModal('', cell.getAttribute('data-label'), {
+          medical_case: cell.getAttribute('data-case'),
+          risk: cell.getAttribute('data-risk')
+        });
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-pkg-row'), function (tr) {
+      bind(tr, function () {
+        openResultsModal('', tr.getAttribute('data-label'), {
+          test_package: tr.getAttribute('data-package')
+        });
+      });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-cond-row'), function (tr) {
+      bind(tr, function () { openConditionTrend(tr.getAttribute('data-condition')); });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-purpose-row'), function (tr) {
+      bind(tr, function () { openPurposeModal(tr.getAttribute('data-purpose')); });
+    });
+
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-request-cell'), function (cell) {
+      bind(cell, function () {
+        openRequestsModal(cell.getAttribute('data-status') || '', cell.getAttribute('data-label'), {
+          test_package: cell.getAttribute('data-pkg')
+        });
+      });
+    });
+  }
+
+  // Who the spend on one purpose went to, with each person's total.
+  function openPurposeModal(purpose) {
+    empModalTitle.textContent = purpose + ' \u2014 spend by employee';
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    var filters = filterValues('visits');
+    filters.purpose = purpose;
+
+    post('/api/method/cova_clinic_integration.api.purpose_spend_people', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (!rows.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">Nothing to show.</div>';
+          return;
+        }
+        var html = '<div class="cdd-visit-total">' +
+                   '<span>' + rows.length + (rows.length === 1 ? ' employee' : ' employees') + '</span>' +
+                   '<span>' + esc(cash(res.total)) + '</span></div>';
+
+        rows.forEach(function (r) {
+          var name = r.employee_name || r.employee || '\u2014';
+          var head = r.route
+            ? '<a class="cdd-visit-date" href="' + esc(r.route) + '" target="_blank" rel="noopener"' +
+              ' title="Open ' + esc(r.employee) + '">' + esc(name) +
+              '<span class="cdd-visit-open" aria-hidden="true">&#8599;</span></a>'
+            : '<span class="cdd-visit-date">' + esc(name) + '</span>';
+          var meta = [];
+          if (r.payroll_number) { meta.push(esc(r.payroll_number)); }
+          meta.push(r.items + (r.items === 1 ? ' item' : ' items') + ' \u00b7 ' +
+                    r.visits + (r.visits === 1 ? ' visit' : ' visits'));
+          if (r.last_visit) { meta.push('Last ' + esc(r.last_visit)); }
+
+          html += '<div class="cdd-visit-item">' +
+                  '<div class="cdd-visit-head">' + head +
+                    '<span class="cdd-visit-cost">' + esc(cash(r.cost)) + '</span>' +
+                  '</div>' +
+                  '<div class="cdd-line-note">' + meta.join(' \u00b7 ') + '</div>' +
+                  '</div>';
+        });
+        empModalBody.innerHTML = html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load purpose spend:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load the list.</div>';
+      });
+  }
+
+  // The sick-off records behind one Sick-Off & Leave tile: who was off, for
+  // which days, how many, and the leave that booked it.
+  function openSickOffModal(kind, label) {
+    empModalTitle.textContent = label;
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    var filters = filterValues('sickoff');
+    // Sick Days is the sum over the same records as Sick-Off Records.
+    filters.kind = kind === 'days' ? '' : (kind || '');
+
+    post('/api/method/cova_clinic_integration.api.sick_off_people', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (!rows.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">Nothing to show.</div>';
+          return;
+        }
+        var totalDays = rows.reduce(function (a, r) { return a + (r.days || 0); }, 0);
+        var summary = res.grouped
+          ? rows.length + (rows.length === 1 ? ' employee' : ' employees') + ' \u00b7 ' + totalDays + ' sick days'
+          : rows.length + (rows.length === 1 ? ' record' : ' records') + ' \u00b7 ' + totalDays + ' sick days';
+        var html = '<div class="cdd-visit-total"><span>' + esc(summary) + '</span></div>';
+
+        function dayLabel(n) { return n + (n === 1 ? ' day' : ' days'); }
+
+        rows.forEach(function (r) {
+          var name = r.employee_name || r.employee || '\u2014';
+          var head = r.route
+            ? '<a class="cdd-visit-date" href="' + esc(r.route) + '" target="_blank" rel="noopener"' +
+              ' title="Open ' + esc(r.name) + '">' + esc(name) +
+              '<span class="cdd-visit-open" aria-hidden="true">&#8599;</span></a>'
+            : '<span class="cdd-visit-date">' + esc(name) + '</span>';
+
+          var meta = [];
+          if (r.payroll_number) { meta.push(esc(r.payroll_number)); }
+          if (res.grouped) {
+            meta.push(r.episodes + (r.episodes === 1 ? ' episode' : ' episodes'));
+            if (r.first_off) {
+              meta.push(esc(r.first_off) + (r.last_off && r.last_off !== r.first_off ? ' \u2192 ' + esc(r.last_off) : ''));
+            }
+            meta.push(r.with_leave + ' with leave');
+          } else {
+            meta.push(esc(r.start_date) + (r.end_date && r.end_date !== r.start_date ? ' \u2192 ' + esc(r.end_date) : ''));
+            if (r.reason) { meta.push(esc(r.reason)); }
+            meta.push(r.leave_route
+              ? '<a href="' + esc(r.leave_route) + '" target="_blank" rel="noopener">' + esc(r.leave_application) + '</a>'
+              : '<span style="color:' + slot(7) + '">no leave application</span>');
+          }
+
+          html += '<div class="cdd-visit-item">' +
+                  '<div class="cdd-visit-head">' + head +
+                    '<span class="cdd-visit-cost">' + dayLabel(r.days || 0) + '</span>' +
+                  '</div>' +
+                  '<div class="cdd-line-note">' + meta.join(' \u00b7 ') + '</div>' +
+                  '</div>';
+        });
+        empModalBody.innerHTML = html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load sick-off list:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load the list.</div>';
+      });
+  }
+
+  // The requests behind one Test Requests tile or Packages by Status cell.
+  var STATUS_COLORS = { Pending: slot(3), Completed: slot(2), Cancelled: slot(7) };
+
+  function openRequestsModal(kind, label, extra) {
+    empModalTitle.textContent = label;
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    var filters = filterValues('requests');
+    filters.kind = kind || '';
+    // A grid cell names its package and status outright; those must win over
+    // the bar's own Status / Package selects, or the list would not match.
+    Object.keys(extra || {}).forEach(function (k) {
+      if (extra[k]) { filters[k] = extra[k]; }
+    });
+    if (kind && kind !== 'overdue') { filters.status = kind; }
+
+    post('/api/method/cova_clinic_integration.api.test_request_people', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (!rows.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">Nothing to show.</div>';
+          return;
+        }
+        var html = '<div class="cdd-visit-total"><span>' + rows.length +
+                   (rows.length === 1 ? ' request' : ' requests') + '</span></div>';
+
+        rows.forEach(function (r) {
+          var name = r.who || r.name;
+          var head = '<a class="cdd-visit-date" href="' + esc(r.route) + '" target="_blank" rel="noopener"' +
+                     ' title="Open ' + esc(r.name) + '">' + esc(name) +
+                     '<span class="cdd-visit-open" aria-hidden="true">&#8599;</span></a>';
+
+          var meta = [esc(r.name)];
+          if (r.payroll_number) {
+            meta.push(esc(r.payroll_number) + (r.member_type === 'Pre Employment' ? ' (ID)' : ''));
+          }
+          if (r.test_package) { meta.push(esc(r.test_package)); }
+          if (r.scheduled_from) {
+            meta.push(esc(r.scheduled_from) +
+              (r.scheduled_to && r.scheduled_to !== r.scheduled_from ? ' \u2192 ' + esc(r.scheduled_to) : ''));
+          }
+          if (r.days_late) { meta.push(r.days_late + (r.days_late === 1 ? ' day late' : ' days late')); }
+          if (r.result_route) {
+            meta.push('<a href="' + esc(r.result_route) + '" target="_blank" rel="noopener">' +
+                      esc(r.linked_test_result) + '</a>');
+          }
+
+          var tone = STATUS_COLORS[r.status];
+          html += '<div class="cdd-visit-item">' +
+                  '<div class="cdd-visit-head">' + head +
+                    '<span class="cdd-visit-cost"' + (tone ? ' style="color:' + tone + '"' : '') + '>' +
+                      esc(r.status || '') + '</span>' +
+                  '</div>' +
+                  '<div class="cdd-line-note">' + meta.join(' \u00b7 ') + '</div>' +
+                  '</div>';
+        });
+        empModalBody.innerHTML = html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load request list:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load the list.</div>';
+      });
+  }
+
+  // The records behind one Disease & Health tile.
+  function openHealthModal(kind, label) {
+    empModalTitle.textContent = label;
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    var filters = filterValues('health');
+    filters.kind = kind;
+
+    post('/api/method/cova_clinic_integration.api.disease_report_detail', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (!rows.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">Nothing to show.</div>';
+          return;
+        }
+
+        // The average is per month of one year, so the title says which year.
+        // With no year filter the rows may span several; name them all.
+        if (kind === 'average') {
+          var years = filters.year ? [String(filters.year)] : [];
+          if (!years.length) {
+            rows.forEach(function (r) {
+              var y = (r.posting_date || '').slice(0, 4);
+              if (y && years.indexOf(y) === -1) { years.push(y); }
+            });
+            years.sort();
+          }
+          if (years.length) { empModalTitle.textContent = label + ' ' + years.join(', '); }
+        }
+
+        var summary;
+        if (kind === 'conditions') {
+          summary = rows.length + (rows.length === 1 ? ' condition' : ' conditions') +
+                    ' · ' + num(res.total) + ' encounters';
+        } else if (kind === 'average') {
+          summary = num(Math.round(res.total / rows.length)) + ' per month across ' +
+                    rows.length + (rows.length === 1 ? ' report' : ' reports');
+        } else if (kind === 'months') {
+          summary = rows.length + (rows.length === 1 ? ' monthly report' : ' monthly reports') +
+                    ' · ' + num(res.total) + ' encounters';
+        } else {
+          summary = rows.length + (rows.length === 1 ? ' line' : ' lines') +
+                    ' · ' + num(res.total) + ' encounters';
+        }
+        var html = '<div class="cdd-visit-total"><span>' + esc(summary) + '</span></div>';
+
+        rows.forEach(function (r) {
+          var title, meta = [];
+          if (kind === 'conditions') {
+            title = r.medical_case;
+            meta.push(r.reports + (r.reports === 1 ? ' report' : ' reports'));
+          } else if (kind === 'average' || kind === 'months') {
+            title = r.month + (r.posting_date ? ' ' + r.posting_date.slice(0, 4) : '');
+            if (r.posting_date) { meta.push('Posted ' + esc(r.posting_date)); }
+            meta.push(r.conditions + (r.conditions === 1 ? ' condition' : ' conditions'));
+          } else {
+            title = r.medical_case;
+            meta.push(esc(r.month) + (r.posting_date ? ' · posted ' + esc(r.posting_date) : ''));
+            if (r.months_seen) {
+              meta.push(r.months_seen === 1 ? 'seen in 1 month' : 'recurred in ' + r.months_seen + ' months');
+            }
+          }
+
+          var head = r.route
+            ? '<a class="cdd-visit-date" href="' + esc(r.route) + '" target="_blank" rel="noopener"' +
+              ' title="Open ' + esc(r.name || title) + '">' + esc(title) +
+              '<span class="cdd-visit-open" aria-hidden="true">&#8599;</span></a>'
+            : '<span class="cdd-visit-date">' + esc(title) + '</span>';
+
+          html += '<div class="cdd-visit-item">' +
+                  '<div class="cdd-visit-head">' + head +
+                    '<span class="cdd-visit-cost">' + num(r.total) + '</span>' +
+                  '</div>' +
+                  (meta.length ? '<div class="cdd-line-note">' + meta.join(' · ') + '</div>' : '') +
+                  '</div>';
+        });
+
+        empModalBody.innerHTML = html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load health list:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load the list.</div>';
+      });
+  }
+
+  // The punches behind one Clinic Visits (biometric) tile.
+  function openPunchModal(kind, label) {
+    empModalTitle.textContent = label;
+    empModalBody.innerHTML = '<div class="cdd-modal-empty">Loading&hellip;</div>';
+    empModal.classList.add('is-open');
+
+    var filters = filterValues('biometric');
+    filters.kind = kind || '';
+
+    // Same two colours as the Arrivals & Departures chart series.
+    var tone = { IN: slot(0), OUT: slot(1) };
+
+    post('/api/method/cova_clinic_integration.api.clinic_punch_people', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (!rows.length) {
+          empModalBody.innerHTML = '<div class="cdd-modal-empty">Nothing to show.</div>';
+          return;
+        }
+
+        var summary, html;
+        if (kind === 'employees' || kind === 'days') {
+          // One grid row per person (or day): the count, its in/out split and
+          // the span of activity, each in its own column.
+          var isEmp = kind === 'employees';
+          summary = isEmp
+            ? rows.length + (rows.length === 1 ? ' employee' : ' employees')
+            : rows.length + (rows.length === 1 ? ' day' : ' days');
+          var totalPunches = rows.reduce(function (a, r) { return a + (r.punches || 0); }, 0);
+          html = '<div class="cdd-visit-total"><span>' + esc(summary) + '</span>' +
+                 '<span>' + totalPunches + ' punches</span></div>' +
+                 '<div class="cdd-punch-cols cdd-punch-cols-emp"><span>' + (isEmp ? 'Employee' : 'Day') + '</span>' +
+                 '<span>Visits</span><span>In</span><span>Out</span>' +
+                 '<span>' + (isEmp ? 'Seen' : 'People') + '</span></div>';
+
+          function stamp(ts) {
+            // Time only when the range is a single day; date otherwise.
+            if (!ts) { return '\u2014'; }
+            return ts.slice(0, 10) === today ? ts.slice(11, 16) : ts.slice(0, 10);
+          }
+          var today = filters.from_date && filters.from_date === filters.to_date ? filters.from_date : '';
+
+          rows.forEach(function (r) {
+            var who, seen;
+            if (isEmp) {
+              var name = r.employee_name || r.employee || '\u2014';
+              who = '<span class="cdd-punch-who">' + esc(name) +
+                    (r.payroll_number ? '<small>' + esc(r.payroll_number) + '</small>' : '') + '</span>';
+              seen = r.first_seen
+                ? stamp(r.first_seen) + (r.last_seen && r.last_seen !== r.first_seen ? ' \u2013 ' + stamp(r.last_seen) : '')
+                : '\u2014';
+            } else {
+              who = '<span class="cdd-punch-who">' + esc(r.day) + '</span>';
+              seen = r.employees + (r.employees === 1 ? ' person' : ' people');
+            }
+            html += '<div class="cdd-punch-row cdd-punch-row-emp">' + who +
+                    '<span class="cdd-punch-n">' + r.punches + '</span>' +
+                    '<span class="cdd-punch-t" style="color:' + tone.IN + '">' + r.in_punches + '</span>' +
+                    '<span class="cdd-punch-t" style="color:' + tone.OUT + '">' + r.out_punches + '</span>' +
+                    '<span class="cdd-punch-dur">' + esc(seen) + '</span>' +
+                    '</div>';
+          });
+          empModalBody.innerHTML = html;
+          return;
+        }
+
+        // Visits: one row per employee stay, grouped under the day, with the
+        // in and out times side by side and how long they spent.
+        var ins = 0, outs = 0;
+        rows.forEach(function (r) { if (r.time_in) { ins++; } if (r.time_out) { outs++; } });
+        summary = (ins + outs) + ' punches \u00b7 ' + rows.length + (rows.length === 1 ? ' visit' : ' visits');
+        html = '<div class="cdd-visit-total"><span>' + esc(summary) + '</span></div>';
+
+        function hm(ts) { return ts ? ts.slice(11, 16) : '\u2014'; }
+        function dur(mins) {
+          if (mins === null || mins === undefined) { return ''; }
+          var h = Math.floor(mins / 60), m = mins % 60;
+          return (h ? h + 'h ' : '') + (m < 10 && h ? '0' : '') + m + 'm';
+        }
+
+        var lastDay = null;
+        rows.forEach(function (r) {
+          if (r.day !== lastDay) {
+            lastDay = r.day;
+            var dayCount = rows.filter(function (x) { return x.day === r.day; }).length;
+            html += '<div class="cdd-punch-day"><span>' + esc(r.day) + '</span>' +
+                    '<span>' + dayCount + (dayCount === 1 ? ' visit' : ' visits') + '</span></div>' +
+                    '<div class="cdd-punch-cols"><span>Employee</span><span>In</span><span>Out</span><span>Stay</span></div>';
+          }
+          var name = r.employee_name || r.employee || '\u2014';
+          var who = r.route
+            ? '<a href="' + esc(r.route) + '" target="_blank" rel="noopener" title="Open ' + esc(r.name) + '">' + esc(name) + '</a>'
+            : esc(name);
+          html += '<div class="cdd-punch-row">' +
+                  '<span class="cdd-punch-who">' + who +
+                    (r.payroll_number ? '<small>' + esc(r.payroll_number) + '</small>' : '') + '</span>' +
+                  '<span class="cdd-punch-t" style="color:' + tone.IN + '">' + hm(r.time_in) + '</span>' +
+                  '<span class="cdd-punch-t" style="color:' + tone.OUT + '">' + hm(r.time_out) + '</span>' +
+                  '<span class="cdd-punch-dur">' + esc(dur(r.minutes)) + '</span>' +
+                  '</div>';
+        });
+
+        empModalBody.innerHTML = html;
+      })
+      .catch(function (err) {
+        console.error('Failed to load punch list:', err);
+        empModalBody.innerHTML = '<div class="cdd-modal-empty">Could not load the list.</div>';
+      });
+  }
+
+  function wireChartActions() {
+    var host = el('cdd-view');
+    if (!host) { return; }
+    Array.prototype.forEach.call(host.querySelectorAll('.cdd-chart-action'), function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (btn.getAttribute('data-action') === 'trend') { openTrendModal(); }
+      });
+    });
+  }
+
+  // ── conditions trend modal ─────────────────────────────────────────
+  // Encounters per condition as a line, highest on the left, with its own
+  // year / month / from / to filters so the period can be changed in place.
+  var trendModal = el('cdd-trend-modal');
+  var trendChart = null;
+  var trendBuilt = false;
+  var trendMode = '';          // 'conditions' (all cases) or 'condition' (one case by month)
+  var trendCondition = '';
+
+  function trendValues() {
+    var months = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#cdd-trend-months .cdd-toggle.is-on'), function (b) {
+      months.push(b.getAttribute('data-month'));
+    });
+    return { year: (el('f-trend_year') || {}).value || '', months: months };
+  }
+
+  function buildTrendFilters() {
+    var wrap = el('cdd-trend-filters');
+    if (!wrap) { return; }
+    var years = (globalFilterOptions || {}).years || [];
+    var h = '<div class="cdd-field cdd-trend-year"><label>Year</label><select id="f-trend_year"><option value="">All Years</option>';
+    years.forEach(function (y) { h += '<option value="' + esc(y) + '">' + esc(y) + '</option>'; });
+    h += '</select></div>';
+    // Months are toggles: none on means the whole year as one line, each one
+    // switched on becomes its own line.
+    h += '<div class="cdd-field cdd-trend-monthfield"><label>Months</label><div class="cdd-toggles" id="cdd-trend-months">';
+    MONTH_LABELS.forEach(function (m) {
+      h += '<button type="button" class="cdd-toggle" data-month="' + m + '" aria-pressed="false">' + m + '</button>';
+    });
+    h += '</div></div>';
+    wrap.innerHTML = h;
+
+    el('f-trend_year').addEventListener('change', loadTrend);
+    Array.prototype.forEach.call(wrap.querySelectorAll('.cdd-toggle'), function (b) {
+      b.addEventListener('click', function () {
+        var on = !b.classList.contains('is-on');
+        b.classList.toggle('is-on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        loadTrend();
+      });
+    });
+    trendBuilt = true;
+  }
+
+  function setTrendMonths(months) {
+    Array.prototype.forEach.call(document.querySelectorAll('#cdd-trend-months .cdd-toggle'), function (b) {
+      var on = months.indexOf(b.getAttribute('data-month')) !== -1;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function loadTrend() {
+    var body = el('cdd-trend-body');
+    var status = el('cdd-trend-status');
+    var filters = trendValues();
+    filters.kind = 'conditions_by_month';
+    if (status) { status.textContent = 'Loading\u2026'; }
+
+    post('/api/method/cova_clinic_integration.api.disease_report_detail', filters)
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (trendChart) { trendChart.destroy(); charts = charts.filter(function (c) { return c !== trendChart; }); trendChart = null; }
+        if (!rows.length) {
+          if (status) { status.textContent = 'No encounters for the selected filters.'; }
+          body.hidden = true;
+          return;
+        }
+        body.hidden = false;
+
+        // Pivot condition x month. Cases run highest total on the left to
+        // lowest on the right, whatever months are switched on.
+        var totals = {}, byCase = {};
+        rows.forEach(function (r) {
+          totals[r.medical_case] = (totals[r.medical_case] || 0) + r.total;
+          byCase[r.medical_case] = byCase[r.medical_case] || {};
+          byCase[r.medical_case][r.month] = (byCase[r.medical_case][r.month] || 0) + r.total;
+        });
+        var cases = Object.keys(totals).sort(function (a, b) { return totals[b] - totals[a]; });
+        var grand = cases.reduce(function (a, c) { return a + totals[c]; }, 0);
+
+        var months = filters.months.length
+          ? MONTH_LABELS.filter(function (m) { return filters.months.indexOf(m) !== -1; })
+          : [];
+        var series = months.length
+          ? months.map(function (m) {
+              return { label: m, values: cases.map(function (c) { return byCase[c][m] || 0; }) };
+            })
+          : [{ label: 'Encounters', values: cases.map(function (c) { return totals[c]; }) }];
+
+        if (status) {
+          status.textContent = cases.length + (cases.length === 1 ? ' condition' : ' conditions') +
+                               ' \u00b7 ' + num(grand) + ' encounters' +
+                               (months.length ? ' \u00b7 ' + months.join(', ') : '');
+        }
+        ensureChartJs(function () {
+          if (!trendModal.classList.contains('is-open')) { return; }
+          trendChart = lineChart('c-trend-modal', {
+            title: 'Encounters by Condition',
+            labels: cases,
+            series: series,
+            xTicks: { autoSkip: false, maxRotation: 45, minRotation: 30 }
+          });
+        });
+      })
+      .catch(function (err) {
+        console.error('Failed to load trend:', err);
+        if (status) { status.textContent = 'Could not load the trend.'; }
+      });
+  }
+
+  // One condition across the months of one year, with a single-select year
+  // toggle. Opened from a row of Conditions by Month.
+  function buildConditionFilters() {
+    var wrap = el('cdd-trend-filters');
+    if (!wrap) { return; }
+    var years = (globalFilterOptions || {}).years || [];
+    var h = '<div class="cdd-field cdd-trend-monthfield"><label>Year</label><div class="cdd-toggles cdd-toggles-years" id="cdd-trend-years">';
+    years.forEach(function (y) {
+      h += '<button type="button" class="cdd-toggle" data-year="' + esc(y) + '" aria-pressed="false">' + esc(y) + '</button>';
+    });
+    h += '</div></div>';
+    wrap.innerHTML = h;
+    Array.prototype.forEach.call(wrap.querySelectorAll('.cdd-toggle'), function (b) {
+      b.addEventListener('click', function () {
+        // Radio behaviour: exactly one year on at a time.
+        setTrendYear(b.getAttribute('data-year'));
+        loadConditionTrend();
+      });
+    });
+    trendBuilt = true;
+  }
+
+  function setTrendYear(year) {
+    Array.prototype.forEach.call(document.querySelectorAll('#cdd-trend-years .cdd-toggle'), function (b) {
+      var on = b.getAttribute('data-year') === String(year);
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  function trendYear() {
+    var on = document.querySelector('#cdd-trend-years .cdd-toggle.is-on');
+    return on ? on.getAttribute('data-year') : '';
+  }
+
+  function loadConditionTrend() {
+    var body = el('cdd-trend-body');
+    var status = el('cdd-trend-status');
+    var year = trendYear();
+    if (status) { status.textContent = 'Loading\u2026'; }
+
+    post('/api/method/cova_clinic_integration.api.disease_report_detail',
+         { kind: 'conditions_by_month', year: year, medical_case: trendCondition })
+      .then(function (res) {
+        var rows = (res && res.rows) || [];
+        if (trendChart) { trendChart.destroy(); charts = charts.filter(function (c) { return c !== trendChart; }); trendChart = null; }
+        var values = MONTH_LABELS.map(function () { return 0; });
+        var total = 0;
+        rows.forEach(function (r) {
+          var i = MONTH_LABELS.indexOf(r.month);
+          if (i >= 0) { values[i] += r.total; total += r.total; }
+        });
+        if (!total) {
+          if (status) { status.textContent = 'No encounters for ' + trendCondition + ' in ' + (year || 'any year') + '.'; }
+          body.hidden = true;
+          return;
+        }
+        body.hidden = false;
+        var seen = values.filter(function (v) { return v; }).length;
+        if (status) {
+          status.textContent = num(total) + ' encounters \u00b7 ' + seen + (seen === 1 ? ' month' : ' months') +
+                               ' \u00b7 ' + num(Math.round(total / seen)) + ' per month';
+        }
+        ensureChartJs(function () {
+          if (!trendModal.classList.contains('is-open')) { return; }
+          trendChart = lineChart('c-trend-modal', {
+            title: trendCondition + ' \u2014 ' + (year || 'all years'),
+            labels: MONTH_LABELS,
+            series: [{ label: 'Encounters', values: values }]
+          });
+        });
+      })
+      .catch(function (err) {
+        console.error('Failed to load condition trend:', err);
+        if (status) { status.textContent = 'Could not load the trend.'; }
+      });
+  }
+
+  function openConditionTrend(condition) {
+    if (!trendModal) { return; }
+    trendCondition = condition;
+    if (trendMode !== 'condition') { trendMode = 'condition'; trendBuilt = false; }
+    if (!trendBuilt) { buildConditionFilters(); }
+    el('cdd-trend-title').textContent = condition;
+    var years = (globalFilterOptions || {}).years || [];
+    var year = globalValues.year && years.indexOf(String(globalValues.year)) !== -1
+      ? String(globalValues.year) : (years[0] || '');
+    setTrendYear(year);
+    trendModal.classList.add('is-open');
+    loadConditionTrend();
+  }
+
+  function openTrendModal() {
+    if (!trendModal) { return; }
+    if (trendMode !== 'conditions') { trendMode = 'conditions'; trendBuilt = false; }
+    if (!trendBuilt) { buildTrendFilters(); }
+    el('cdd-trend-title').textContent = 'Conditions Trend';
+    // Open on the page's year; a month picked on the page starts switched on.
+    var y = el('f-trend_year');
+    if (y) { y.value = globalValues.year || ''; }
+    setTrendMonths(globalValues.month ? [globalValues.month] : []);
+    trendModal.classList.add('is-open');
+    loadTrend();
+  }
+
+  function closeTrendModal() {
+    if (!trendModal) { return; }
+    trendModal.classList.remove('is-open');
+    if (trendChart) { trendChart.destroy(); charts = charts.filter(function (c) { return c !== trendChart; }); trendChart = null; }
+  }
+
+  if (trendModal) {
+    el('cdd-trend-close').addEventListener('click', closeTrendModal);
+    trendModal.addEventListener('click', function (e) {
+      // Only a click on the backdrop itself closes; the dialog swallows its own.
+      if (e.target === trendModal) { closeTrendModal(); }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && trendModal.classList.contains('is-open')) { closeTrendModal(); }
+    });
+  }
+
   function wireKpiDrill() {
     var host = el('cdd-view');
     if (!host) { return; }
     Array.prototype.forEach.call(host.querySelectorAll('.cdd-kpi-drill'), function (tile) {
       function open(e) {
         e.stopPropagation();
-        openResultsModal(tile.getAttribute('data-drill'), tile.getAttribute('data-drill-label'));
+        // A view may bring its own list; the Test Results people list is the default.
+        var opener = (VIEWS[current] && VIEWS[current].drill) || openResultsModal;
+        opener(tile.getAttribute('data-drill'), tile.getAttribute('data-drill-label'));
       }
       tile.addEventListener('click', open);
       tile.addEventListener('keydown', function (e) {
