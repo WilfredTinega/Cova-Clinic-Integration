@@ -2256,6 +2256,28 @@
     });
   }
 
+  // Sizes the horizontal-scroll wrapper for the all-conditions trend and
+  // returns the x-axis tick config to match: up to 20 labels fit the panel
+  // untouched; 21-30 get a wide canvas the wrapper scrolls to; beyond 30,
+  // scrolling stops paying off, so ticks are thinned to ~20 instead.
+  function sizeTrendScroll(count) {
+    var scroll = el('cdd-trend-scroll');
+    var PX_PER_TICK = 46, MAX_SCROLL_TICKS = 30, FIT_TICKS = 20;
+    if (scroll) {
+      if (count > FIT_TICKS && count <= MAX_SCROLL_TICKS) {
+        scroll.style.width = (count * PX_PER_TICK) + 'px';
+        scroll.classList.add('is-scrollable');
+      } else {
+        scroll.style.width = '100%';
+        scroll.classList.remove('is-scrollable');
+        scroll.scrollLeft = 0;
+      }
+    }
+    return count > MAX_SCROLL_TICKS
+      ? { autoSkip: true, maxTicksLimit: FIT_TICKS, maxRotation: 45, minRotation: 30 }
+      : { autoSkip: false, maxRotation: 45, minRotation: 30 };
+  }
+
   function loadTrend() {
     var body = el('cdd-trend-body');
     var status = el('cdd-trend-status');
@@ -2299,13 +2321,14 @@
                                ' \u00b7 ' + num(grand) + ' encounters' +
                                (months.length ? ' \u00b7 ' + months.join(', ') : '');
         }
+        var xTicks = sizeTrendScroll(cases.length);
         ensureChartJs(function () {
           if (!trendModal.classList.contains('is-open')) { return; }
           trendChart = lineChart('c-trend-modal', {
             title: 'Encounters by Condition',
             labels: cases,
             series: series,
-            xTicks: { autoSkip: false, maxRotation: 45, minRotation: 30 }
+            xTicks: xTicks
           });
         });
       })
