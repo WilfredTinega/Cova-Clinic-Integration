@@ -13,7 +13,9 @@
   "column_break_total",
   "total_cases",
   "section_break_cases",
-  "medical_cases"
+  "medical_cases",
+  "data_tab",
+  "cova_raw"
  ],
  "fields": [
   {
@@ -57,6 +59,16 @@
    "fieldtype": "Table",
    "label": "Medical Cases",
    "options": "Health Report"
+  },
+  {
+   "fieldname": "data_tab",
+   "fieldtype": "Tab Break",
+   "label": "Data"
+  },
+  {
+   "fieldname": "cova_raw",
+   "fieldtype": "Long Text",
+   "label": "COVA Raw"
   }
  ],
  "index_web_pages_for_search": 1,

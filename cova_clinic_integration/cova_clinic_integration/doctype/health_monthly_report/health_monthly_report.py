@@ -18,6 +18,7 @@ class HealthMonthlyReport(Document):
 			HealthReport,
 		)
 
+		cova_raw: DF.LongText | None
 		medical_cases: DF.Table[HealthReport]
 		month: DF.Literal["", "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 		posting_date: DF.Date | None

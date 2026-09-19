@@ -84,10 +84,13 @@ function cova_clinic_buttons(frm, member, registered) {
         frappe.prompt(
             [
                 {
+                    // The packages are records (Test Package), not a hardcoded
+                    // list: a site that raises an X-Ray or a Spirometry adds it
+                    // in the desk instead of waiting for a release.
                     fieldname: 'test_package',
                     label: __('Test Package'),
-                    fieldtype: 'Select',
-                    options: ['Pre Employment Wellness', 'Cholinesterase', 'Food Handler', 'Annual Medical', 'Exit Medical'].join('\n'),
+                    fieldtype: 'Link',
+                    options: 'Test Package',
                     reqd: 1
                 },
                 {

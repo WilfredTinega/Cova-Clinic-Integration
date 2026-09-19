@@ -173,11 +173,6 @@
    "group": "Results",
    "link_doctype": "Clinic Test Result",
    "link_fieldname": "clinic_visit_reference"
-  },
-  {
-   "group": "Membership",
-   "link_doctype": "Cova Members",
-   "link_fieldname": "visit_reference"
   }
  ],
  "modified": "2026-08-30 16:00:22.764897",

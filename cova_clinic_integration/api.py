@@ -20,6 +20,10 @@ import frappe
 from frappe import _
 from frappe.integrations.utils import make_post_request
 
+from cova_clinic_integration.cova_clinic_integration.doctype.test_package.test_package import (
+	cova_package_code,
+)
+from cova_clinic_integration.cova_trace import record_cova_message
 from cova_clinic_integration.member_link import backfill_member_links
 
 # ─── access control ───────────────────────────────────────────────────────
@@ -71,8 +75,15 @@ def build_headers():
 	return headers
 
 
-def cova_post(url, headers, payload):
+def cova_post(url, headers, payload, trace=None):
 	"""POST to COVA and always come back with a dict.
+
+	``trace`` is an optional ``(doctype, name, action)`` naming the document the
+	exchange belongs to. Given one, both halves of the conversation — what we
+	sent and what came back — are appended to that record's **COVA Raw** field,
+	which is the only place a user can see what actually went over the wire
+	without Error Log access. It is done here rather than at each call site so a
+	new endpoint cannot quietly skip it.
 
 	``make_post_request`` calls ``raise_for_status()``, so any 4xx/5xx becomes an
 	exception **and the response body is thrown away** — which is the one thing
@@ -85,6 +96,9 @@ def cova_post(url, headers, payload):
 	``{"error": ..., "status_code": ..., "cova_response": ...}`` — never raises,
 	so a bulk sweep degrades row by row.
 	"""
+	if trace:
+		record_cova_message(trace[0], trace[1], trace[2], "sent", payload)
+
 	try:
 		result = make_post_request(url, headers=headers, json=payload)
 	except Exception as exc:
@@ -114,15 +128,24 @@ def cova_post(url, headers, payload):
 				indent=2,
 			),
 		)
-		return {"error": message, "status_code": status_code, "cova_response": body}
+		failure = {"error": message, "status_code": status_code, "cova_response": body}
+		if trace:
+			record_cova_message(trace[0], trace[1], trace[2], "received", failure, status="error")
+		return failure
 
 	# A 200 is not automatically a success: COVA answers an already-enrolled
 	# member with {"status": "duplicate", ...}. Hand that back as-is — callers
 	# read `status` — but make sure we always return something dict-shaped, since
 	# make_post_request returns None for an empty body and a str for text/plain.
-	if isinstance(result, dict):
-		return result
-	return {"cova_response": result}
+	if not isinstance(result, dict):
+		result = {"cova_response": result}
+
+	if trace:
+		record_cova_message(
+			trace[0], trace[1], trace[2], "received", result, status=result.get("status") or "success"
+		)
+
+	return result
 
 
 def cova_member_id_of(result):
@@ -280,8 +303,11 @@ def save_cova_response(cm_name, result):
 			v = source.get(mapping[erp_field])
 			if v is not None:
 				cm.set(erp_field, v)
-		cm.set("cova_raw", json.dumps(result, default=str))
 		cm.save(ignore_permissions=True)
+		# Appended after the save rather than set on the document: every COVA
+		# exchange lands in cova_raw the same way, and the member keeps the
+		# earlier ones instead of each registration overwriting the last.
+		record_cova_message("Cova Members", cm.name, "register_member", "received", result)
 	except Exception:
 		frappe.log_error(title="COVA save_cova_response", message=frappe.get_traceback())
 
@@ -367,6 +393,61 @@ def deactivate_one(base_url, deactivation_endpoint, headers, emp):
 
 
 # ─── main dispatcher endpoint ───────────────────────────────────────────────
+
+
+def mark_test_request_sent(request_name, result):
+	"""Record on the request what COVA's reply to a submission means.
+
+	Two things are read off the same reply:
+
+	* ``received_by_cova`` — the only proof on the document that the request
+	  reached the clinic. It is set on a success and **never cleared**: a
+	  re-send that fails does not un-deliver the copy COVA already accepted,
+	  and clearing it would send someone chasing a request that is in fact in.
+	* ``cova_member_id`` — filled only while empty, because a value already
+	  there came from an earlier reply and is what the request was matched on.
+
+	Written with db.set_value rather than a save: this runs inside the API call,
+	the fields are read-only to users, and a save here would re-run validate on a
+	document the caller may still be holding.
+	"""
+	if not request_name or not isinstance(result, dict) or result.get("error"):
+		return
+
+	frappe.db.set_value(
+		"Clinic Test Request", request_name, "received_by_cova", 1, update_modified=False
+	)
+
+	member_id = cova_member_id_of(result)
+	if member_id and not frappe.db.get_value("Clinic Test Request", request_name, "cova_member_id"):
+		frappe.db.set_value(
+			"Clinic Test Request", request_name, "cova_member_id", member_id, update_modified=False
+		)
+
+
+def _test_request_error(data, message):
+	"""Refuse a test submission the way the dispatcher answers everything else.
+
+	The submission lives inside the action chain, so it cannot fall through to the
+	tail of ``cova_clinic_api`` once it has to stop early. This keeps the two
+	things that tail does — the Error Log entry and ``frappe.response["message"]``
+	— so a refusal still reads as ``{"error": ...}`` on the desk buttons instead
+	of arriving as a traceback page.
+	"""
+	resp = {"error": message}
+	try:
+		frappe.log_error(
+			title="COVA submit_test_request · refused",
+			message=json.dumps(
+				{"action": "submit_test_request", "request": data, "response": resp},
+				default=str,
+				indent=2,
+			),
+		)
+	except Exception:
+		pass
+	frappe.response["message"] = resp
+	return resp
 
 
 @frappe.whitelist()
@@ -490,10 +571,18 @@ def cova_clinic_api():
 			req_doc.insert(ignore_permissions=True)
 			exit_request = req_doc.name
 
-		result = cova_post(base_url + deactivation_endpoint, headers, payload)
+		# Looked up before the call so the exchange can be traced onto the member
+		# it is about; the status update below reuses it.
+		cm_name = frappe.db.get_value("Cova Members", {"employee": employee}, "name")
+
+		result = cova_post(
+			base_url + deactivation_endpoint,
+			headers,
+			payload,
+			trace=("Cova Members", cm_name, "deactivate_member") if cm_name else None,
+		)
 
 		# Update Cova Member to Inactive
-		cm_name = frappe.db.get_value("Cova Members", {"employee": employee}, "name")
 		if cm_name:
 			frappe.db.set_value("Cova Members", cm_name, "status", "Inactive")
 
@@ -587,15 +676,36 @@ def cova_clinic_api():
 		headers = build_headers()
 
 		request_name = data.get("request_name")
-		doc = frappe.get_doc("Clinic Test Request", request_name)
+		doc = frappe.get_doc("Clinic Test Request", request_name) if request_name else None
 
-		member_identifier = doc.payroll_number if doc.member_type == "Active" else doc.get("nationa_id") or ""
+		if doc is None:
+			# The desk buttons and the bulk re-send read `error` off the reply;
+			# a raised DoesNotExistError would reach them as an HTML 404 page.
+			return _test_request_error(data, "request_name is required")
+
+		if doc.member_type == "Active":
+			# `payroll_number` is filled on validate, so a request that predates
+			# that (or one imported straight into the table) still has it empty —
+			# and COVA answers `memberIdentifier: ""` with a refusal. Fall back to
+			# the same identifier the API route sends, rather than sending blank.
+			member_identifier = doc.payroll_number
+			if not member_identifier and doc.employee:
+				member_identifier = employee_payroll_id(frappe.get_doc("Employee", doc.employee))
+		else:
+			member_identifier = doc.get("nationa_id") or ""
+
+		if not member_identifier:
+			return _test_request_error(
+				data,
+				"No member identifier on %s: an Active request needs an Employee, "
+				"a Pre Employment request needs a National ID." % doc.name,
+			)
 
 		payload = {
 			"requestId": doc.name,
 			"memberIdentifier": member_identifier,
 			"memberType": doc.member_type.replace(" ", ""),
-			"testPackage": doc.test_package.replace(" ", ""),
+			"testPackage": cova_package_code(doc.test_package),
 			"scheduledWindow": {
 				"from": str(doc.scheduled_from) if doc.get("scheduled_from") else "",
 				"to": str(doc.scheduled_to) if doc.get("scheduled_to") else "",
@@ -604,15 +714,30 @@ def cova_clinic_api():
 		}
 
 		if doc.member_type == "Pre Employment":
+			# `full_name` is not a field on the request — the pre-employment route
+			# only ever set it in memory before insert. Reading it as an attribute
+			# off a reloaded doc raises AttributeError, which is why re-sending a
+			# candidate's request used to 500; the name lives on the Cova Member.
+			full_name = doc.get("full_name") or ""
+			if not full_name and doc.get("cova_member"):
+				full_name = frappe.db.get_value("Cova Members", doc.cova_member, "full_name") or ""
+
 			payload["candidateBiodata"] = {
-				"fullName": doc.full_name or "",
+				"fullName": full_name,
 				"nationalId": doc.get("nationa_id") or "",
 				"dateOfBirth": str(doc.date_of_birth) if doc.get("date_of_birth") else "",
 				"gender": doc.gender or "",
 				"phone": normalize_phone(doc.phone_number),
 			}
 
-		result = cova_post(base_url + test_request_endpoint, headers, payload)
+		result = cova_post(
+			base_url + test_request_endpoint,
+			headers,
+			payload,
+			trace=("Clinic Test Request", doc.name, "submit_test_request"),
+		)
+
+		mark_test_request_sent(doc.name, result)
 
 		# Status stays Pending until the test result webhook comes back from Cova
 		resp = result
@@ -675,7 +800,7 @@ def cova_clinic_api():
 				"requestId": req_doc.name,
 				"memberIdentifier": national_id,
 				"memberType": "PreEmployment",
-				"testPackage": "PreEmploymentWellness",
+				"testPackage": cova_package_code("Pre Employment Wellness"),
 				"scheduledWindow": {"from": str(req_doc.scheduled_from), "to": str(req_doc.scheduled_to)},
 				"candidateBiodata": {
 					"fullName": full_name,
@@ -686,7 +811,13 @@ def cova_clinic_api():
 				},
 				"notes": req_doc.notes,
 			}
-			test_result = cova_post(base_url + test_request_endpoint, headers, test_payload)
+			test_result = cova_post(
+				base_url + test_request_endpoint,
+				headers,
+				test_payload,
+				trace=("Clinic Test Request", req_doc.name, "submit_test_request"),
+			)
+			mark_test_request_sent(req_doc.name, test_result)
 
 			# Step 4: create Cova Member and store COVA's registration response on it.
 			#
@@ -765,7 +896,6 @@ def cova_clinic_api():
 			doc.benefit_laboratory = b_lab
 			doc.benefit_diagnostic = b_diag
 			doc.benefit_specialist = b_spec
-			doc.cova_raw = json.dumps(data, default=str)
 
 			total = 0
 			for item in line_items:
@@ -778,6 +908,7 @@ def cova_clinic_api():
 
 			doc.total_cost = total
 			doc.insert(ignore_permissions=True)
+			record_cova_message("Clinic Visit Cost", doc.name, "receive_visit", "received", data)
 
 			# Update Cova Member last visit
 			cm_name = frappe.db.get_value("Cova Members", {"payroll_number": payroll_number}, "name")
@@ -827,9 +958,14 @@ def cova_clinic_api():
 			result_doc.request_id = request_id
 			result_doc.test_package = test_package
 			result_doc.clinical_outcome = clinical_outcome
-			result_doc.cova_raw = json.dumps(data, default=str)
 			result_doc.append("results", {"test": mc_name, "select_tezd": risk})
 			result_doc.insert(ignore_permissions=True)
+			record_cova_message(
+				"Clinic Test Result", result_doc.name, "receive_test_result", "received", data
+			)
+			# Also on the request: it is the record someone opens to ask whether
+			# the test ever came back, and the result is that answer.
+			record_cova_message("Clinic Test Request", request_id, "receive_test_result", "received", data)
 
 			frappe.db.set_value("Clinic Test Request", request_id, "status", "Completed")
 			frappe.db.set_value("Clinic Test Request", request_id, "linked_test_result", result_doc.name)
@@ -914,6 +1050,9 @@ def cova_clinic_api():
 				else:
 					doc.total_cases = total
 					doc.insert(ignore_permissions=True)
+					record_cova_message(
+						"Health Monthly Report", doc.name, "receive_health_report", "received", data
+					)
 					resp = {"status": "success", "name": doc.name, "total_cases": total}
 					if skipped:
 						resp["skipped"] = skipped
@@ -999,13 +1138,19 @@ def cova_clinic_api():
 							"requestId": req_doc.name,
 							"memberIdentifier": employee_payroll_id(emp),
 							"memberType": "Active",
-							"testPackage": package.replace(" ", ""),
+							"testPackage": cova_package_code(package),
 							"scheduledWindow": {"from": today, "to": window_end},
 							"notes": req_doc.notes,
 						}
 						# cova_post never raises, so the outcome has to be read
 						# off the result rather than inferred from "no exception".
-						send_result = cova_post(base_url + test_request_endpoint, headers, payload)
+						send_result = cova_post(
+							base_url + test_request_endpoint,
+							headers,
+							payload,
+							trace=("Clinic Test Request", req_doc.name, "run_statutory_tests"),
+						)
+						mark_test_request_sent(req_doc.name, send_result)
 						if send_result.get("error"):
 							failed = failed + 1
 							send_failures.append(
@@ -2898,6 +3043,8 @@ def get_clinic_data():
 					"time_out": data.get("time_out"),
 				}
 			).insert(ignore_permissions=True)
+
+			record_cova_message("Clinic Checkin", doc.name, "clinic_data_post", "received", data)
 
 			frappe.response.pop("docs", None)
 			frappe.db.commit()

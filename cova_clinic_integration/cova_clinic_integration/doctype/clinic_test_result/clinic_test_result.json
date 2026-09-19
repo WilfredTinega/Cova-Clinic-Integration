@@ -152,11 +152,6 @@
    "link_fieldname": "linked_test_result"
   },
   {
-   "group": "Membership",
-   "link_doctype": "Cova Members",
-   "link_fieldname": "test_result_reference"
-  },
-  {
    "group": "Recruitment",
    "link_doctype": "Job Offer",
    "link_fieldname": "linked_test_result"

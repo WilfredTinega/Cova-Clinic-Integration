@@ -41,9 +41,17 @@ class TestClinicTestRequest(IntegrationTestCase):
 		with self.assertRaises(frappe.MandatoryError):
 			doc.insert()
 
-	def test_test_package_is_a_fixed_list(self):
+	def test_test_package_must_be_a_known_package(self):
+		# The Select became a Link to Test Package — a package nobody created is
+		# still refused, now as a link validation rather than a Select one.
 		with self.assertRaises(frappe.ValidationError):
 			self._base(test_package="Something Else").insert()
+
+	def test_test_package_links_to_the_package_record(self):
+		self.assertEqual(
+			frappe.get_meta("Clinic Test Request").get_field("test_package").options,
+			"Test Package",
+		)
 
 	def test_pre_employment_request_needs_no_employee(self):
 		doc = self._base(

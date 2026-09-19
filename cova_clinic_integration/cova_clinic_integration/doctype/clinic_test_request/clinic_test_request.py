@@ -8,6 +8,32 @@ from cova_clinic_integration.member_link import set_cova_member
 
 
 class ClinicTestRequest(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		cova_member: DF.Link | None
+		cova_member_id: DF.Data | None
+		cova_raw: DF.LongText | None
+		date_of_birth: DF.Date | None
+		employee: DF.Link | None
+		gender: DF.Link | None
+		linked_test_result: DF.Link | None
+		member_type: DF.Literal["", "Active", "Pre Employment"]
+		nationa_id: DF.Data | None
+		notes: DF.SmallText | None
+		payroll_number: DF.Data | None
+		phone_number: DF.Data | None
+		received_by_cova: DF.Check
+		scheduled_from: DF.Date
+		scheduled_to: DF.Date
+		status: DF.Literal["", "Pending", "Completed", "Cancelled"]
+		test_package: DF.Link
+	# end: auto-generated types
 
 	def validate(self):
 		# Keeps the member's Connections tab complete — see member_link.
