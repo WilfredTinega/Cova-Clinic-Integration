@@ -11,6 +11,12 @@ point outwards — so a member's history was not reachable from the member.
 Each per-member doctype therefore carries a ``cova_member`` link, filled in on
 validate. Two doctypes deliberately do not: Health Monthly Report is an
 aggregate across everyone, and Medical Case is a catalogue of conditions.
+
+The corollary, learned the hard way: the request, result and visit forms must NOT
+declare a Connection back to Cova Members. Doing it through those same outward
+fields makes a card that resolves for the member's newest record only and is
+blank on every older one — which reads as a broken tab, not as a design. The
+member is reached from the ``cova_member`` field on the form instead.
 """
 
 import frappe

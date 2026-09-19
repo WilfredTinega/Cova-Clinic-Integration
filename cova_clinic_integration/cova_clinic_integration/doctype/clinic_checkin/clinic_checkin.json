@@ -31,7 +31,9 @@
   "column_break_scji",
   "end_date",
   "section_break_fzca",
-  "reason"
+  "reason",
+  "data_tab",
+  "cova_raw"
  ],
  "fields": [
   {
@@ -171,6 +173,16 @@
   {
    "fieldname": "column_break_ulqe",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "data_tab",
+   "fieldtype": "Tab Break",
+   "label": "Data"
+  },
+  {
+   "fieldname": "cova_raw",
+   "fieldtype": "Long Text",
+   "label": "COVA Raw"
   }
  ],
  "links": [],

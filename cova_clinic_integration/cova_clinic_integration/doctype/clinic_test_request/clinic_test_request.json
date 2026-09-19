@@ -9,19 +9,23 @@
   "member_type",
   "employee",
   "cova_member",
+  "cova_member_id",
   "payroll_number",
   "nationa_id",
   "date_of_birth",
   "phone_number",
   "column_break_dhim",
   "status",
+  "received_by_cova",
   "gender",
   "test_package",
   "scheduled_from",
   "scheduled_to",
   "column_break_rnjg",
   "notes",
-  "linked_test_result"
+  "linked_test_result",
+  "data_tab",
+  "cova_raw"
  ],
  "fields": [
   {
@@ -46,8 +50,14 @@
    "fieldname": "cova_member",
    "fieldtype": "Link",
    "label": "Cova Member",
-   "options": "Cova Members",
-   "description": "Filled in automatically; links this record back to the member's Cova record."
+   "options": "Cova Members"
+  },
+  {
+   "fieldname": "cova_member_id",
+   "fieldtype": "Data",
+   "label": "Cova Member ID",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "depends_on": "eval:doc.member_type=='Active'",
@@ -93,6 +103,17 @@
    "reqd": 1
   },
   {
+   "default": "0",
+   "description": "Ticked when Cova accepted the request. Set by the integration from Cova's reply, never by hand.",
+   "fieldname": "received_by_cova",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Received by Cova",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "depends_on": "eval:doc.member_type=='Pre Employment'",
    "fieldname": "gender",
    "fieldtype": "Link",
@@ -101,11 +122,11 @@
   },
   {
    "fieldname": "test_package",
-   "fieldtype": "Select",
+   "fieldtype": "Link",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Test Package",
-   "options": "\nPre Employment Wellness\nCholinesterase\nFood Handler\nAnnual Medical\nExit Medical",
+   "options": "Test Package",
    "reqd": 1
   },
   {
@@ -136,6 +157,16 @@
    "fieldtype": "Link",
    "label": "Linked Test Result",
    "options": "Clinic Test Result"
+  },
+  {
+   "fieldname": "data_tab",
+   "fieldtype": "Tab Break",
+   "label": "Data"
+  },
+  {
+   "fieldname": "cova_raw",
+   "fieldtype": "Long Text",
+   "label": "COVA Raw"
   }
  ],
  "links": [
@@ -143,14 +174,9 @@
    "group": "Results",
    "link_doctype": "Clinic Test Result",
    "link_fieldname": "request_id"
-  },
-  {
-   "group": "Membership",
-   "link_doctype": "Cova Members",
-   "link_fieldname": "test_request_reference"
   }
  ],
- "modified": "2026-05-31 14:56:57.617076",
+ "modified": "2026-09-19 13:45:24.213651",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Clinic Test Request",
@@ -170,6 +196,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

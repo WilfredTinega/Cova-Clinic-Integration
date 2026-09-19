@@ -625,6 +625,31 @@ class TestConnections(IntegrationTestCase):
 
 		self.assertGreaterEqual(checked, 15, "expected the full set of connections")
 
+	def test_the_member_is_not_a_connection_on_its_own_records(self):
+		"""A member is not a child of the records that name it.
+
+		Clinic Test Request, Clinic Test Result and Clinic Visit Cost each used to
+		declare a "Membership" connection to Cova Members through the member's
+		``test_request_reference`` / ``test_result_reference`` / ``visit_reference``.
+		Those three fields are the member's *outward* pointers at its latest
+		request, result and visit — not a backlink — so the card resolved for at
+		most the newest record of each kind and was empty on every older one
+		(``test_request_reference`` is only written when a result webhook lands, so
+		on kaitet-group it was empty on all of them). The member is reached from the
+		``cova_member`` Link field on the form; the records are reached from the
+		member's own Connections tab, which is the direction Frappe supports.
+		"""
+		for doctype in ("Clinic Test Request", "Clinic Test Result", "Clinic Visit Cost"):
+			member_links = [
+				l.link_fieldname for l in frappe.get_meta(doctype).links if l.link_doctype == "Cova Members"
+			]
+			self.assertEqual(member_links, [], doctype + " declares a Cova Members connection")
+
+			self.assertIsNotNone(
+				frappe.get_meta(doctype).get_field("cova_member"),
+				doctype + " has no cova_member field to reach the member by",
+			)
+
 	def test_employee_reaches_every_clinic_record(self):
 		links = {l.link_doctype for l in frappe.get_meta("Employee").links}
 		for doctype in (
@@ -1199,6 +1224,70 @@ class TestCovaPostFailures(IntegrationTestCase):
 			resp = self._call({"action": "submit_test_request", "request_name": request.name})
 
 		self.assertEqual(resp["error"], "unknown test package")
+		# A refusal must leave the request looking unsent — that checkbox is what
+		# the form and the bulk re-send read to decide there is work to redo.
+		self.assertEqual(
+			frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 0
+		)
+
+	def test_received_by_cova_is_set_from_the_reply_and_never_cleared(self):
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Active",
+				"employee": self.employee,
+				"payroll_number": self.payroll,
+				"status": "Pending",
+				"test_package": "Annual Medical",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		reply = {"status": "success", "requestId": request.name, "covaMemberId": "CHSC00014878"}
+		with patch.object(api, "make_post_request", return_value=reply):
+			self._call({"action": "submit_test_request", "request_name": request.name})
+
+		self.assertEqual(
+			frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 1
+		)
+		# The same reply carries the member COVA accepted it for.
+		self.assertEqual(
+			frappe.db.get_value("Clinic Test Request", request.name, "cova_member_id"), "CHSC00014878"
+		)
+
+		# A re-send that fails does not un-deliver the copy COVA already has;
+		# clearing the box would send someone chasing a request that is in.
+		error = self._http_error(500, {"message": "gateway down"})
+		with patch.object(api, "make_post_request", side_effect=error):
+			self._call({"action": "submit_test_request", "request_name": request.name})
+
+		self.assertEqual(
+			frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 1
+		)
+
+	def test_a_later_reply_does_not_overwrite_the_member_id(self):
+		request = frappe.get_doc(
+			{
+				"doctype": "Clinic Test Request",
+				"member_type": "Active",
+				"employee": self.employee,
+				"payroll_number": self.payroll,
+				"status": "Pending",
+				"test_package": "Annual Medical",
+				"scheduled_from": "2026-08-01",
+				"scheduled_to": "2026-08-15",
+			}
+		).insert(ignore_permissions=True)
+
+		for member_id in ("CHSC00000001", "CHSC00000002"):
+			reply = {"status": "success", "requestId": request.name, "covaMemberId": member_id}
+			with patch.object(api, "make_post_request", return_value=reply):
+				self._call({"action": "submit_test_request", "request_name": request.name})
+
+		self.assertEqual(
+			frappe.db.get_value("Clinic Test Request", request.name, "cova_member_id"), "CHSC00000001"
+		)
 
 	def test_sync_members_counts_a_rejection_with_its_reason(self):
 		error = self._http_error(400, {"message": "nationalId is required"})

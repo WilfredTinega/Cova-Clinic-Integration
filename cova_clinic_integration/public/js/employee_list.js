@@ -18,7 +18,6 @@ frappe.listview_settings[DOCTYPE] = Object.assign({}, prior, {
         if (prior_onload) { prior_onload.call(this, listview); }
 
         const LOCKED_COMPANY = 'Karen Roses';
-        const TEST_PACKAGES = ['Pre Employment Wellness', 'Cholinesterase', 'Food Handler', 'Annual Medical', 'Exit Medical'];
 
         function open_employee_picker(opts) {
             let all_rows = [];
@@ -350,7 +349,8 @@ frappe.listview_settings[DOCTYPE] = Object.assign({}, prior, {
                 action_label: __('Create & Send'),
                 extra_fields: [
                     { fieldtype: 'Section Break', label: __('Test Details') },
-                    { fieldname: 'test_package', label: __('Test Package'), fieldtype: 'Select', options: TEST_PACKAGES.join('\n'), reqd: 1 },
+                    // Test Package records, not a hardcoded list — see employee.js.
+                    { fieldname: 'test_package', label: __('Test Package'), fieldtype: 'Link', options: 'Test Package', reqd: 1 },
                     { fieldtype: 'Column Break' },
                     { fieldname: 'scheduled_from', label: __('Scheduled From'), fieldtype: 'Date', reqd: 1, default: frappe.datetime.get_today() },
                     { fieldtype: 'Column Break' },

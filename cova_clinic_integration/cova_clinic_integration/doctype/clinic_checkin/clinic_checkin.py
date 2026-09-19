@@ -19,6 +19,7 @@ class ClinicCheckin(Document):
 		from frappe.types import DF
 
 		cova_member: DF.Link | None
+		cova_raw: DF.LongText | None
 		employee: DF.Link
 		employee_payroll_number: DF.Data | None
 		end_date: DF.Date | None

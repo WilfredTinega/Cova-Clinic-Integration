@@ -17,11 +17,34 @@ every supported version.
 """
 
 try:  # frappe v16+
-	from frappe.tests import IntegrationTestCase
+	from frappe.tests import IntegrationTestCase as _FrappeTestCase
 except ImportError:  # frappe v15
-	from frappe.tests.utils import FrappeTestCase as IntegrationTestCase
+	from frappe.tests.utils import FrappeTestCase as _FrappeTestCase
 
 __all__ = ["IntegrationTestCase"]
+
+
+class IntegrationTestCase(_FrappeTestCase):
+	"""The version-tolerant base, plus this app's master data.
+
+	``Clinic Test Request.test_package`` is a Link to Test Package, so every
+	fixture that names a package ("Annual Medical", "Pre Employment Wellness")
+	needs that record to exist or it fails link validation. The packages are
+	created by ``setup.ensure_test_packages()`` at install and at migrate, but
+	this suite rolls the database back between tests — several modules call
+	``frappe.db.rollback()`` outright in ``tearDown`` — so they are re-asserted
+	per test rather than once per class, where the first rollback would take
+	them away again.
+	"""
+
+	def setUp(self):
+		super().setUp()
+
+		# Imported here, not at module load: setup.py pulls in a doctype
+		# controller, and this module is imported by every test file.
+		from cova_clinic_integration.setup import ensure_test_packages
+
+		ensure_test_packages()
 
 
 # ─── shared fixtures ───────────────────────────────────────────────────────

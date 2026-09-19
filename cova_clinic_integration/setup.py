@@ -122,11 +122,32 @@ CLINIC_FIELDS = {
 		},
 	],
 	"Employee": [
+		# A fourth column in the Overview tab's first section, holding Status and
+		# the two COVA fields.
+		#
+		# The anchor is `image` — the hidden Attach Image that sits between
+		# `date_of_joining` and `status` — so the break lands immediately before
+		# Status and takes it into the new column. Anchoring on `date_of_joining`
+		# instead would put the break ahead of anything a site has hung off that
+		# field, dragging those into the COVA column too.
+		#
+		# These anchors must name real Employee DocFields. The fields used to be
+		# anchored on `national_id`, which is a Custom Field on Kenyan sites
+		# (csf_ke) and no field at all on a vanilla one — _position() cannot see
+		# either, so both COVA fields stayed where append() left them: the end of
+		# the field list, which on Employee is *after* ERPNext's own
+		# `connections_tab` break. That is why they rendered in the Connections
+		# tab rather than anywhere near the identity fields.
+		{
+			"fieldname": "cova_overview_column",
+			"fieldtype": "Column Break",
+			"insert_after": "image",
+		},
 		{
 			"fieldname": "cova_member_id",
 			"label": "Cova Member ID",
 			"fieldtype": "Data",
-			"insert_after": "national_id",
+			"insert_after": "status",
 			"read_only": 1,
 			"no_copy": 1,
 		},
@@ -171,15 +192,32 @@ def _save_standard_doctype(dt):
 
 
 def _position(dt, row, insert_after):
-	"""Move an appended field row to sit right after `insert_after`, if that
-	anchor is one of the doctype's own DocFields (custom-field anchors on the
-	parent are not in dt.fields, so the row simply stays at the end)."""
+	"""Move an appended field row to sit right after `insert_after`.
+
+	Only the doctype's own DocFields can be anchored against: a Custom Field on
+	the parent (csf_ke's `national_id`, say) is merged into the form at render
+	time and is not in `dt.fields`, so there is nothing here to measure from.
+
+	When the anchor cannot be found the row is put before the doctype's
+	Connections tab rather than left at the end of the list. The end of a tabbed
+	standard doctype is *inside* its last tab — on Employee that is ERPNext's own
+	`connections_tab` — so a missed anchor does not merely leave a field in a
+	dull spot, it files it under Connections, which reads as a bug in the app
+	rather than a missing anchor.
+	"""
 	if not insert_after:
 		return
+
 	names = [f.fieldname for f in dt.fields]
+
 	if insert_after in names:
 		dt.fields.remove(row)
 		dt.fields.insert(names.index(insert_after) + 1, row)
+		return
+
+	if "connections_tab" in names:
+		dt.fields.remove(row)
+		dt.fields.insert(names.index("connections_tab"), row)
 
 
 def install_clinic_fields():
@@ -389,11 +427,43 @@ def repair_naming_series():
 		)
 
 
+# ─── master data ──────────────────────────────────────────────────────────
+
+# The packages the integration itself raises. Clinic Test Request.test_package
+# used to be a Select carrying exactly this list; it is a Link to Test Package
+# now, so the list has to exist as records or the requests api.py creates —
+# "Exit Medical" on deactivation, "Pre Employment Wellness" on a Job Offer,
+# "Annual Medical" on the statutory sweep — fail link validation.
+#
+# Anything beyond these five is site data: added in the desk, or minted from
+# what was already on the requests by the create_test_package_records patch.
+STANDARD_TEST_PACKAGES = (
+	"Pre Employment Wellness",
+	"Cholinesterase",
+	"Food Handler",
+	"Annual Medical",
+	"Exit Medical",
+)
+
+
+def ensure_test_packages():
+	"""Create the packages api.py names in code. Idempotent — after_migrate runs
+	it on every deploy, and an existing package is left exactly as the site has
+	it (a cova_code or a Disabled tick set in the desk is never overwritten)."""
+	for package in STANDARD_TEST_PACKAGES:
+		if frappe.db.exists("Test Package", package):
+			continue
+		frappe.get_doc({"doctype": "Test Package", "package_name": package}).insert(
+			ignore_permissions=True, ignore_if_duplicate=True
+		)
+
+
 def after_install():
 	"""Single entry point so hooks name one thing per lifecycle event."""
 	install_clinic_fields()
 	install_clinic_links()
 	repair_naming_series()
+	ensure_test_packages()
 
 
 def before_uninstall():
