@@ -159,6 +159,23 @@ CLINIC_FIELDS = {
 			"default": "0",
 			"no_copy": 1,
 		},
+		# First aid: kept on the employee themselves. Their phone and farm are
+		# the employee's own (cell_number, and custom_farm or branch).
+		{
+			"fieldname": "is_first_aider",
+			"label": "First Aider",
+			"fieldtype": "Check",
+			"insert_after": "cova_deactivated",
+			"default": "0",
+			"description": "Trained in first aid; listed on the Clinic dashboard with their phone and farm.",
+		},
+		{
+			"fieldname": "first_aid_certified_until",
+			"label": "First Aid Certificate Valid Until",
+			"fieldtype": "Date",
+			"insert_after": "is_first_aider",
+			"depends_on": "eval:doc.is_first_aider",
+		},
 	],
 }
 
@@ -310,6 +327,9 @@ CLINIC_CONNECTIONS = {
 		{"group": "Cova Clinic", "link_doctype": "Clinic Test Request", "link_fieldname": "employee"},
 		{"group": "Cova Clinic", "link_doctype": "Clinic Test Result", "link_fieldname": "employee"},
 		{"group": "Clinic Attendance", "link_doctype": "Clinic Checkin", "link_fieldname": "employee"},
+		{"group": "Clinic Attendance", "link_doctype": "Clinic Ticket", "link_fieldname": "employee"},
+		{"group": "Workplace Safety", "link_doctype": "Work Accident", "link_fieldname": "employee"},
+		{"group": "Workplace Safety", "link_doctype": "Work Accident", "link_fieldname": "first_aider"},
 	],
 }
 
@@ -397,9 +417,7 @@ def repair_naming_series():
 			continue
 
 		highest = 0
-		for (name,) in frappe.db.sql(
-			f"SELECT name FROM `tab{doctype}` WHERE name LIKE %s", (prefix + "%",)
-		):
+		for (name,) in frappe.db.sql(f"SELECT name FROM `tab{doctype}` WHERE name LIKE %s", (prefix + "%",)):
 			tail = str(name)[len(prefix) :]
 			if tail.isdigit():
 				highest = max(highest, int(tail))
@@ -458,12 +476,109 @@ def ensure_test_packages():
 		)
 
 
+def ensure_test_groups():
+	"""Seed Cova Clinic Settings → Test Scheduling with the groups the
+	statutory run used to hardcode. Only while the table is empty, so anything
+	HR has set up is never touched, and only designations this site has."""
+	from cova_clinic_integration.cova_clinic_integration.doctype.cova_clinic_settings.cova_clinic_settings import (
+		DEFAULT_TEST_GROUPS,
+	)
+
+	settings = frappe.get_doc("Cova Clinic Settings")
+	if settings.get("test_groups"):
+		return
+	for group, spec in DEFAULT_TEST_GROUPS.items():
+		if not frappe.db.exists("Test Package", spec["test_package"]):
+			continue
+		for designation in spec["designations"]:
+			if frappe.db.exists("Designation", designation):
+				settings.append(
+					"test_groups",
+					{"group_name": group, "test_package": spec["test_package"], "designation": designation},
+				)
+	if settings.get("test_groups"):
+		settings.flags.ignore_mandatory = True
+		settings.save(ignore_permissions=True)
+
+
+def install_gate_pass_link():
+	"""Tie clinic tickets to upande_ta's Gate Pass on sites that have it.
+
+	cova_clinic_integration does not require upande_ta, so neither the
+	``gate_pass`` link on Clinic Ticket nor the sidebar entry can ship in the
+	standard JSON — a Link to a doctype the site lacks will not sync. Both are
+	added here instead, and only where Gate Pass exists."""
+	if not frappe.db.exists("DocType", "Gate Pass"):
+		return
+
+	from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+
+	create_custom_fields(
+		{
+			"Clinic Ticket": [
+				{
+					"fieldname": "gate_pass",
+					"fieldtype": "Link",
+					"label": "Gate Pass",
+					"options": "Gate Pass",
+					"insert_after": "issued_by",
+					"no_copy": 1,
+					"read_only": 1,
+				}
+			],
+			# Which ticket a pass was raised from — one ticket, one live pass.
+			"Gate Pass": [
+				{
+					"fieldname": "clinic_ticket",
+					"fieldtype": "Link",
+					"label": "Clinic Ticket",
+					"options": "Clinic Ticket",
+					"insert_after": "pass_type",
+					"depends_on": "eval:doc.clinic_ticket",
+					"read_only": 1,
+					"no_copy": 1,
+					"search_index": 1,
+				}
+			],
+		},
+		update=True,
+	)
+
+	if not frappe.db.exists("Workspace Sidebar", "Cova Clinic"):
+		return
+	sidebar = frappe.get_doc("Workspace Sidebar", "Cova Clinic")
+	if any(i.link_to == "Gate Pass" for i in sidebar.items):
+		return
+	labels = [i.label for i in sidebar.items]
+	at = labels.index("Clinic Ticket") + 1 if "Clinic Ticket" in labels else len(labels)
+	row = sidebar.append(
+		"items",
+		{
+			"type": "Link",
+			"label": "Gate Pass",
+			"link_type": "DocType",
+			"link_to": "Gate Pass",
+			"icon": "unlock",
+			"collapsible": 1,
+			"open_in_new_tab": 1,
+		},
+	)
+	sidebar.items.remove(row)
+	sidebar.items.insert(at, row)
+	for i, row in enumerate(sidebar.items):
+		row.idx = i + 1
+	sidebar.flags.ignore_permissions = True
+	sidebar.save()
+
+
 def after_install():
 	"""Single entry point so hooks name one thing per lifecycle event."""
 	install_clinic_fields()
 	install_clinic_links()
 	repair_naming_series()
 	ensure_test_packages()
+	ensure_test_groups()
+	install_gate_pass_link()
 
 
 def before_uninstall():
@@ -489,9 +604,7 @@ def uninstall_clinic_fields():
 		for fn in fieldnames:
 			if fn in table_cols:
 				try:
-					frappe.db.sql_ddl(
-						"ALTER TABLE `tab{0}` DROP COLUMN `{1}`".format(doctype, fn)
-					)
+					frappe.db.sql_ddl("ALTER TABLE `tab{0}` DROP COLUMN `{1}`".format(doctype, fn))
 				except Exception:
 					frappe.log_error(
 						title="COVA uninstall drop column",

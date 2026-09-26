@@ -1,0 +1,81 @@
+{
+ "actions": [],
+ "creation": "2026-09-26 15:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "group_name",
+  "test_package",
+  "department",
+  "designation",
+  "employees_per_designation",
+  "enabled"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "description": "Rows with the same Group are scheduled together, e.g. Cholinesterase or Food Handler.",
+   "fieldname": "group_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Group",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "test_package",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Test Package",
+   "options": "Test Package",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Department",
+   "options": "Department"
+  },
+  {
+   "columns": 2,
+   "fieldname": "designation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Designation",
+   "options": "Designation"
+  },
+  {
+   "columns": 1,
+   "default": "0",
+   "description": "How many to pick at random from each designation. 0 takes everyone.",
+   "fieldname": "employees_per_designation",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Per Designation",
+   "non_negative": 1
+  },
+  {
+   "columns": 1,
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-26 15:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Test Group",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

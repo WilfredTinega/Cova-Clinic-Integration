@@ -1,0 +1,21 @@
+{
+ "action": "Go to Page",
+ "action_label": "Open clinic tickets",
+ "creation": "2026-09-26 12:00:00.000000",
+ "description": "<b>What this is.</b> A ticket is the permission for one employee to go to the clinic on a given day. Issue one here, or it is issued for you when a <b>Medical</b> Gate Pass is approved.<br><br><b>What happens next.</b> When the employee taps in at the clinic, the ticket turns <b>Visited</b> by itself. A ticket nobody used turns <b>Expired</b> the day after it runs out.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-09-26 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Issue Clinic Tickets",
+ "owner": "Administrator",
+ "path": "List/Clinic Ticket",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Clinic Ticket — who may go to the clinic",
+ "validate_action": 0
+}

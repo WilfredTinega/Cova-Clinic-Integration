@@ -12,7 +12,7 @@ the same check so the page cannot be bypassed by calling the endpoint directly.
 import frappe
 from frappe import _
 
-from cova_clinic_integration.api import has_health_report_access, health_report_roles
+from cova_clinic_integration.api import allowed_dashboard_sections, has_health_report_access
 
 no_cache = 1
 
@@ -35,21 +35,15 @@ def get_context(context):
 	# The desk lives at /app before v17 and /desk from v17 on, so the way back
 	# is derived rather than written out.
 	context.desk_url = _desk_url()
+	context.allowed_sections = allowed_dashboard_sections()
 
-	# Who is looking at this. Shown in the rail so it is obvious whose access
-	# the figures are being read under — the page is permission-gated, and the
-	# role that opens it is worth stating.
+	# Who is looking at this, shown at the foot of the rail.
 	user = frappe.session.user
 	full_name = frappe.utils.get_fullname(user) or user
-	roles = health_report_roles(user)
-
 	context.viewer = {
 		"id": user,
 		"full_name": full_name,
 		"initials": _initials(full_name),
-		"roles": roles,
-		# Administrator holds every role on the site, so the list is trimmed.
-		"role_label": ", ".join(roles[:2]) + (f" +{len(roles) - 2}" if len(roles) > 2 else ""),
 	}
 	return context
 

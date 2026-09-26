@@ -1,0 +1,21 @@
+{
+ "action": "Go to Page",
+ "action_label": "Open the schedules",
+ "creation": "2026-09-26 12:00:00.000000",
+ "description": "<b>What this is.</b> Plan who goes for the annual medical tests and when. Pick the test package and the dates, then the departments and designations that are due.<br><br><b>Get Employees</b> fills the list from those filters (optionally a few at random from each designation). <b>Create Test Requests</b> then raises a Clinic Test Request for each one and sends it to Cova.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-09-26 12:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Schedule Annual Medical Tests",
+ "owner": "Administrator",
+ "path": "List/Clinic Test Schedule",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Annual Test Schedule — plan the year's tests",
+ "validate_action": 0
+}

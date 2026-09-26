@@ -32,6 +32,12 @@
   "end_date",
   "section_break_fzca",
   "reason",
+  "external_facility_section",
+  "is_external",
+  "column_break_extf",
+  "facility",
+  "column_break_exts",
+  "sick_off_given",
   "data_tab",
   "cova_raw"
  ],
@@ -183,10 +189,46 @@
    "fieldname": "cova_raw",
    "fieldtype": "Long Text",
    "label": "COVA Raw"
+  },
+  {
+   "fieldname": "external_facility_section",
+   "fieldtype": "Section Break",
+   "label": "External Facility"
+  },
+  {
+   "default": "0",
+   "description": "Tick when the employee was seen at a facility outside the clinic.",
+   "fieldname": "is_external",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "External"
+  },
+  {
+   "fieldname": "column_break_extf",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.is_external",
+   "fieldname": "facility",
+   "fieldtype": "Data",
+   "label": "Facility",
+   "mandatory_depends_on": "eval:doc.is_external"
+  },
+  {
+   "fieldname": "column_break_exts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.is_external",
+   "description": "Days of sick off the external facility gave.",
+   "fieldname": "sick_off_given",
+   "fieldtype": "Int",
+   "label": "Sick Off Given (Days)",
+   "non_negative": 1
   }
  ],
  "links": [],
- "modified": "2026-08-30 20:28:51.379611",
+ "modified": "2026-09-26 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Clinic Checkin",

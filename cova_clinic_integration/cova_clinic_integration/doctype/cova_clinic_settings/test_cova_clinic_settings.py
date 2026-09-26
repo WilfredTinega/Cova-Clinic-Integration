@@ -5,11 +5,22 @@ import frappe
 
 from cova_clinic_integration.testing import IntegrationTestCase
 
-
 # The automatic link crawl reaches Company and trips the Fiscal Year overlap on
 # a site that already has one. These fixtures build the Employee they need
 # themselves (see cova_clinic_integration.testing.make_employee).
-IGNORE_TEST_RECORD_DEPENDENCIES = ["Employee", "Company", "Leave Application"]
+#
+# Department / Designation / User are reached through the Test Scheduling and
+# Dashboard Access tables. Crawling into them imports ERPNext's own test
+# modules, whose bootstrap data (Price Lists, …) collides on a fresh CI site.
+IGNORE_TEST_RECORD_DEPENDENCIES = [
+	"Employee",
+	"Company",
+	"Leave Application",
+	"Department",
+	"Designation",
+	"User",
+]
+
 
 class TestCovaClinicSettings(IntegrationTestCase):
 	"""Single doctype holding the COVA base URL and the endpoint paths every

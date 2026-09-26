@@ -9,11 +9,12 @@
   "member_type",
   "employee",
   "cova_member",
-  "cova_member_id",
   "payroll_number",
   "nationa_id",
   "date_of_birth",
   "phone_number",
+  "department",
+  "designation",
   "column_break_dhim",
   "status",
   "received_by_cova",
@@ -24,6 +25,8 @@
   "column_break_rnjg",
   "notes",
   "linked_test_result",
+  "clinic_test_schedule",
+  "test_group",
   "data_tab",
   "cova_raw"
  ],
@@ -51,13 +54,6 @@
    "fieldtype": "Link",
    "label": "Cova Member",
    "options": "Cova Members"
-  },
-  {
-   "fieldname": "cova_member_id",
-   "fieldtype": "Data",
-   "label": "Cova Member ID",
-   "no_copy": 1,
-   "read_only": 1
   },
   {
    "depends_on": "eval:doc.member_type=='Active'",
@@ -167,6 +163,43 @@
    "fieldname": "cova_raw",
    "fieldtype": "Long Text",
    "label": "COVA Raw"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Active'",
+   "fetch_from": "employee.department",
+   "fetch_if_empty": 1,
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "Department"
+  },
+  {
+   "depends_on": "eval:doc.member_type=='Active'",
+   "fetch_from": "employee.designation",
+   "fetch_if_empty": 1,
+   "fieldname": "designation",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Designation",
+   "options": "Designation"
+  },
+  {
+   "fieldname": "clinic_test_schedule",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Clinic Test Schedule",
+   "no_copy": 1,
+   "options": "Clinic Test Schedule",
+   "read_only": 1
+  },
+  {
+   "fieldname": "test_group",
+   "fieldtype": "Data",
+   "in_standard_filter": 1,
+   "label": "Test Group",
+   "no_copy": 1,
+   "read_only": 1
   }
  ],
  "links": [
@@ -176,7 +209,7 @@
    "link_fieldname": "request_id"
   }
  ],
- "modified": "2026-09-19 13:45:24.213651",
+ "modified": "2026-09-26 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Clinic Test Request",

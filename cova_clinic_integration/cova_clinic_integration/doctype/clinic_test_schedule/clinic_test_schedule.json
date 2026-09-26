@@ -1,0 +1,234 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:CTS-{YYYY}-{####}",
+ "creation": "2026-09-26 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "title",
+  "test_package",
+  "company",
+  "column_break_head",
+  "scheduled_from",
+  "scheduled_to",
+  "year",
+  "column_break_status",
+  "status",
+  "notes",
+  "filters_section",
+  "test_group",
+  "departments",
+  "designations",
+  "column_break_filters",
+  "employees_per_designation",
+  "skip_already_scheduled",
+  "skip_employees_on_leave",
+  "send_to_cova",
+  "employees_section",
+  "employees",
+  "total_employees",
+  "column_break_totals",
+  "requests_created"
+ ],
+ "fields": [
+  {
+   "description": "e.g. 2026 Annual Medical — Crop Protection",
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1
+  },
+  {
+   "fieldname": "test_package",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Test Package",
+   "options": "Test Package",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_head",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scheduled_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled From",
+   "reqd": 1
+  },
+  {
+   "fieldname": "scheduled_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled To",
+   "reqd": 1
+  },
+  {
+   "description": "Taken from Scheduled From.",
+   "fieldname": "year",
+   "fieldtype": "Int",
+   "in_standard_filter": 1,
+   "label": "Year",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nScheduled\nPartly Scheduled",
+   "read_only": 1
+  },
+  {
+   "description": "Sent to Cova as the notes on every test request.",
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "description": "Pick the departments and designations due for this test. Leave one empty to take every department (or designation).",
+   "fieldname": "filters_section",
+   "fieldtype": "Section Break",
+   "label": "Who Is Going"
+  },
+  {
+   "fieldname": "departments",
+   "fieldtype": "Table MultiSelect",
+   "label": "Departments",
+   "options": "Clinic Schedule Department"
+  },
+  {
+   "fieldname": "designations",
+   "fieldtype": "Table MultiSelect",
+   "label": "Designations",
+   "options": "Clinic Schedule Designation"
+  },
+  {
+   "fieldname": "column_break_filters",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "How many to pick at random from each designation. 0 takes everyone who matches.",
+   "fieldname": "employees_per_designation",
+   "fieldtype": "Int",
+   "label": "Employees per Designation",
+   "non_negative": 1
+  },
+  {
+   "default": "1",
+   "description": "Leaves out anyone who already has a test request for this package in the same year.",
+   "fieldname": "skip_already_scheduled",
+   "fieldtype": "Check",
+   "label": "Skip Employees Already Scheduled This Year"
+  },
+  {
+   "default": "1",
+   "description": "Send each test request to Cova as it is created.",
+   "fieldname": "send_to_cova",
+   "fieldtype": "Check",
+   "label": "Send Requests to Cova"
+  },
+  {
+   "fieldname": "employees_section",
+   "fieldtype": "Section Break",
+   "label": "Employees"
+  },
+  {
+   "fieldname": "employees",
+   "fieldtype": "Table",
+   "label": "Employees",
+   "options": "Clinic Schedule Employee"
+  },
+  {
+   "fieldname": "total_employees",
+   "fieldtype": "Int",
+   "label": "Total Employees",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_totals",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "requests_created",
+   "fieldtype": "Int",
+   "label": "Test Requests Created",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Pick a group from Cova Clinic Settings → Test Scheduling to fill the package, departments and designations below.",
+   "fieldname": "test_group",
+   "fieldtype": "Autocomplete",
+   "in_standard_filter": 1,
+   "label": "Test Group"
+  },
+  {
+   "default": "1",
+   "description": "Anyone on approved leave during the window is not scheduled; with no request raised, the next schedule picks them up.",
+   "fieldname": "skip_employees_on_leave",
+   "fieldtype": "Check",
+   "label": "Leave Out Employees on Leave"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-26 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Test Schedule",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

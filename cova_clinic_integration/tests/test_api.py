@@ -10,6 +10,7 @@ exercised here because they POST to the COVA API; use the Node-RED harness for
 those so the payload can be inspected on the wire.
 """
 
+from typing import ClassVar
 from unittest.mock import patch
 
 import frappe
@@ -218,7 +219,7 @@ class TestCovaClinicApi(IntegrationTestCase):
 		self.assertEqual(resp["total_cases"], 42)
 
 		doc = frappe.get_doc("Health Monthly Report", resp["name"])
-		self.assertEqual(doc.month, "NOV")          # upper-cased by the endpoint
+		self.assertEqual(doc.month, "NOV")  # upper-cased by the endpoint
 		self.assertEqual(len(doc.medical_cases), 2)
 		# unseen conditions are created as Medical Cases on the way through
 		self.assertTrue(frappe.db.exists("Medical Case", "Cova Api Malaria"))
@@ -235,9 +236,7 @@ class TestCovaClinicApi(IntegrationTestCase):
 
 	def test_receive_health_report_requires_month_and_cases(self):
 		self.assertIn("required", self._call({"action": "receive_health_report", "cases": []})["error"])
-		self.assertIn(
-			"required", self._call({"action": "receive_health_report", "month": "JAN"})["error"]
-		)
+		self.assertIn("required", self._call({"action": "receive_health_report", "month": "JAN"})["error"])
 
 
 class TestPayrollIdentifier(IntegrationTestCase):
@@ -266,9 +265,7 @@ class TestPayrollIdentifier(IntegrationTestCase):
 
 	def test_identifier_accepts_a_plain_row(self):
 		employee = make_employee("CV-API-8102", "Row Form")
-		row = frappe.db.get_all(
-			"Employee", filters={"name": employee}, fields=["name", "employee_number"]
-		)[0]
+		row = frappe.db.get_all("Employee", filters={"name": employee}, fields=["name", "employee_number"])[0]
 		self.assertEqual(api.employee_payroll_id(row), employee)
 
 	def test_inbound_resolves_the_employee_id(self):
@@ -290,7 +287,7 @@ class TestPayrollIdentifier(IntegrationTestCase):
 		with stub_request(
 			json_body={
 				"action": "receive_visit",
-				"payrollNumber": employee,          # what the app now sends out
+				"payrollNumber": employee,  # what the app now sends out
 				"visitDateTime": "2026-09-01 10:00:00",
 				"lineItems": [{"type": "Consultation", "amount": 400}],
 				"benefitBalanceAfter": {},
@@ -447,9 +444,7 @@ class TestGender(IntegrationTestCase):
 		# payload carries is a valid Gender name with no translation needed.
 		employee = make_employee("CV-API-8200", "Gender Flow")
 		self.assertEqual(frappe.db.get_value("Employee", employee, "gender"), "Male")
-		cm = api.create_or_update_cova_member(
-			"Active", employee, "", "Gender Flow", employee, "", "Male"
-		)
+		cm = api.create_or_update_cova_member("Active", employee, "", "Gender Flow", employee, "", "Male")
 		self.assertEqual(frappe.db.get_value("Cova Members", cm, "gender"), "Male")
 
 
@@ -461,7 +456,7 @@ class TestReactivation(IntegrationTestCase):
 	machine.
 	"""
 
-	COVA_OK = {"status": "registered", "covaMemberId": "COVA-TEST-1"}
+	COVA_OK: ClassVar[dict] = {"status": "registered", "covaMemberId": "COVA-TEST-1"}
 
 	def setUp(self):
 		self.payroll = "CV-API-8300"
@@ -481,9 +476,7 @@ class TestReactivation(IntegrationTestCase):
 				return api.cova_clinic_api(), m
 
 	def _register(self):
-		return self._call(
-			{"action": "register_member", "member_type": "Active", "employee": self.employee}
-		)
+		return self._call({"action": "register_member", "member_type": "Active", "employee": self.employee})
 
 	def _deactivate(self):
 		return self._call(
@@ -516,9 +509,7 @@ class TestReactivation(IntegrationTestCase):
 		self._deactivate()
 		self._register()
 		self.assertEqual(self._member().name, first)
-		self.assertEqual(
-			frappe.db.count("Cova Members", {"employee": self.employee}), 1
-		)
+		self.assertEqual(frappe.db.count("Cova Members", {"employee": self.employee}), 1)
 
 	def test_registering_again_clears_the_employee_deactivation_flag(self):
 		self._register()
@@ -604,7 +595,7 @@ class TestConnections(IntegrationTestCase):
 
 	def test_every_declared_connection_resolves(self):
 		checked = 0
-		for doctype in self.APP_DOCTYPES + ("Employee",):
+		for doctype in (*self.APP_DOCTYPES, "Employee"):
 			for link in frappe.get_meta(doctype).links:
 				where = "%s -> %s.%s" % (doctype, link.link_doctype, link.link_fieldname)
 
@@ -666,8 +657,7 @@ class TestConnections(IntegrationTestCase):
 		them. There used to be a second field for punches, which meant a row
 		loaded into the wrong column silently changed meaning."""
 		fieldnames = {
-			l.link_fieldname for l in frappe.get_meta("Employee").links
-			if l.link_doctype == "Clinic Checkin"
+			l.link_fieldname for l in frappe.get_meta("Employee").links if l.link_doctype == "Clinic Checkin"
 		}
 		self.assertEqual(fieldnames, {"employee"})
 
@@ -698,7 +688,7 @@ class TestConnections(IntegrationTestCase):
 		# What a non-idempotent installer would leave behind. Asserted as state
 		# rather than by re-running install_clinic_links(), which commits and
 		# saves a standard doctype — not something to do inside a test.
-		for doctype in self.APP_DOCTYPES + ("Employee",):
+		for doctype in (*self.APP_DOCTYPES, "Employee"):
 			keys = [
 				(l.link_doctype, l.link_fieldname, l.table_fieldname or "")
 				for l in frappe.get_meta(doctype).links
@@ -737,9 +727,7 @@ class TestCovaMemberLinks(IntegrationTestCase):
 		# Health Monthly Report spans everyone and Medical Case is a catalogue of
 		# conditions — neither belongs to a member.
 		for doctype in ("Health Monthly Report", "Medical Case"):
-			self.assertIsNone(
-				frappe.get_meta(doctype).get_field("cova_member"), doctype
-			)
+			self.assertIsNone(frappe.get_meta(doctype).get_field("cova_member"), doctype)
 
 	def test_a_visit_links_itself_to_the_member(self):
 		doc = frappe.get_doc(
@@ -835,9 +823,7 @@ class TestCovaMemberLinks(IntegrationTestCase):
 		):
 			resp = api.cova_clinic_api()
 		self.assertEqual(resp["status"], "success")
-		self.assertEqual(
-			frappe.db.get_value("Clinic Visit Cost", resp["name"], "cova_member"), self.member
-		)
+		self.assertEqual(frappe.db.get_value("Clinic Visit Cost", resp["name"], "cova_member"), self.member)
 
 
 class TestClinicReports(IntegrationTestCase):
@@ -881,9 +867,9 @@ class TestClinicReports(IntegrationTestCase):
 	def test_access_is_denied_without_an_hr_role(self):
 		user = "cova-no-hr@example.com"
 		if not frappe.db.exists("User", user):
-			frappe.get_doc(
-				{"doctype": "User", "email": user, "first_name": "No", "last_name": "Hr"}
-			).insert(ignore_permissions=True)
+			frappe.get_doc({"doctype": "User", "email": user, "first_name": "No", "last_name": "Hr"}).insert(
+				ignore_permissions=True
+			)
 		frappe.set_user(user)
 		try:
 			self.assertFalse(api.has_health_report_access())
@@ -891,6 +877,153 @@ class TestClinicReports(IntegrationTestCase):
 				api.assert_health_report_access()
 		finally:
 			frappe.set_user("Administrator")
+
+
+class TestDashboardViewers(IntegrationTestCase):
+	"""Cova Clinic Settings' Dashboard Viewers list, once filled, is the only
+	way into the clinic dashboards."""
+
+	def tearDown(self):
+		frappe.db.rollback()
+
+	def _hr_user(self, email):
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "Viewer",
+					"send_welcome_email": 0,
+					"roles": [{"role": "HR Manager"}],
+				}
+			).insert(ignore_permissions=True)
+		return email
+
+	def test_hr_roles_open_the_dashboards_while_the_list_is_empty(self):
+		frappe.db.delete("Clinic Dashboard Viewer", {"parenttype": "Cova Clinic Settings"})
+		self.assertTrue(api.has_health_report_access(self._hr_user("hr-open@example.com")))
+
+	def test_a_listed_user_sees_only_the_ticked_sections(self):
+		listed = self._hr_user("hr-listed@example.com")
+		unlisted = self._hr_user("hr-unlisted@example.com")
+		settings = frappe.get_doc("Cova Clinic Settings")
+		settings.set("dashboard_viewers", [{"user": listed, "view_tickets": 1, "view_sickoff": 1}])
+		settings.save(ignore_permissions=True)
+
+		self.assertEqual(api.allowed_dashboard_sections(listed), ["sickoff", "tickets"])
+		self.assertTrue(api.has_health_report_access(listed, "tickets"))
+		self.assertFalse(api.has_health_report_access(listed, "health"))
+		# An HR role is no longer enough once the list has anyone on it.
+		self.assertFalse(api.has_health_report_access(unlisted))
+		self.assertTrue(api.has_health_report_access("Administrator", "health"))
+		self.assertFalse(api.has_health_report_access("Guest"))
+
+	def test_an_unticked_section_is_refused_by_its_endpoint(self):
+		listed = self._hr_user("hr-tickets@example.com")
+		settings = frappe.get_doc("Cova Clinic Settings")
+		settings.set("dashboard_viewers", [{"user": listed, "view_tickets": 1}])
+		settings.save(ignore_permissions=True)
+
+		frappe.set_user(listed)
+		try:
+			with stub_request(json_body={}):
+				api.clinic_ticket_report()
+			with self.assertRaises(frappe.PermissionError):
+				with stub_request(json_body={}):
+					api.clinic_disease_report()
+		finally:
+			frappe.set_user("Administrator")
+
+
+class TestClinicOverview(IntegrationTestCase):
+	def tearDown(self):
+		frappe.set_user("Administrator")
+		frappe.db.rollback()
+
+	def test_overview_shows_only_the_ticked_sections_totals(self):
+		email = "hr-overview@example.com"
+		if not frappe.db.exists("User", email):
+			frappe.get_doc(
+				{
+					"doctype": "User",
+					"email": email,
+					"first_name": "Overview",
+					"send_welcome_email": 0,
+					"roles": [{"role": "HR Manager"}],
+				}
+			).insert(ignore_permissions=True)
+		settings = frappe.get_doc("Cova Clinic Settings")
+		settings.set("dashboard_viewers", [{"user": email, "view_overview": 1, "view_tickets": 1}])
+		settings.save(ignore_permissions=True)
+
+		frappe.set_user(email)
+		with stub_request(json_body={"year": "2026"}):
+			resp = api.clinic_overview_report()
+		self.assertIn("tickets", resp["kpis"])
+		self.assertNotIn("cases", resp["kpis"])
+		self.assertNotIn("sick_offs", resp["kpis"])
+
+	def test_administrator_sees_every_total(self):
+		with stub_request(json_body={"year": "2026"}):
+			resp = api.clinic_overview_report()
+		for key in ("cases", "tickets", "clinic_visits", "sick_offs", "tests"):
+			self.assertIn(key, resp["kpis"])
+
+
+class TestClinicStays(IntegrationTestCase):
+	"""A day in the clinic runs from the employee's first punch to their last,
+	whatever log type each was."""
+
+	@staticmethod
+	def _stay(punches, **times):
+		from datetime import datetime
+
+		row = {"punches": punches}
+		row.update({k: datetime.fromisoformat(v) if v else None for k, v in times.items()})
+		return api._describe_stay(row)
+
+	def test_first_in_to_last_out(self):
+		st = self._stay(
+			2,
+			first_in="2026-09-01 08:00",
+			last_in="2026-09-01 08:00",
+			first_out="2026-09-01 09:30",
+			last_out="2026-09-01 09:30",
+		)
+		self.assertEqual(st["interval"], "First In \u2192 Last Out")
+		self.assertEqual(st["minutes"], 90)
+
+	def test_first_in_to_last_in_without_an_out(self):
+		st = self._stay(
+			2, first_in="2026-09-01 08:00", last_in="2026-09-01 08:45", first_out=None, last_out=None
+		)
+		self.assertEqual(st["interval"], "First In \u2192 Last In")
+		self.assertEqual(st["minutes"], 45)
+
+	def test_first_out_to_last_out_without_an_in(self):
+		st = self._stay(
+			2, first_in=None, last_in=None, first_out="2026-09-01 10:00", last_out="2026-09-01 10:20"
+		)
+		self.assertEqual(st["interval"], "First Out \u2192 Last Out")
+		self.assertEqual(st["minutes"], 20)
+
+	def test_first_out_to_last_in(self):
+		st = self._stay(
+			2,
+			first_in="2026-09-01 11:00",
+			last_in="2026-09-01 11:00",
+			first_out="2026-09-01 10:00",
+			last_out="2026-09-01 10:00",
+		)
+		self.assertEqual(st["interval"], "First Out \u2192 Last In")
+		self.assertEqual(st["minutes"], 60)
+
+	def test_a_single_punch_has_no_time_spent(self):
+		st = self._stay(
+			1, first_in="2026-09-01 08:00", last_in="2026-09-01 08:00", first_out=None, last_out=None
+		)
+		self.assertEqual(st["interval"], "First In only")
+		self.assertIsNone(st["minutes"])
 
 
 class TestClinicReportXlsx(IntegrationTestCase):
@@ -935,9 +1068,7 @@ class TestGetClinicData(IntegrationTestCase):
 		# get_clinic_data's POST branch calls frappe.db.commit() itself, so the
 		# usual rollback does not undo the check-ins these tests create — they
 		# have to be deleted explicitly or they accumulate on the site.
-		for name in frappe.get_all(
-			"Clinic Checkin", filters={"employee": self.employee}, pluck="name"
-		):
+		for name in frappe.get_all("Clinic Checkin", filters={"employee": self.employee}, pluck="name"):
 			frappe.delete_doc("Clinic Checkin", name, force=True, ignore_permissions=True)
 		frappe.db.commit()
 		frappe.db.rollback()
@@ -960,7 +1091,9 @@ class TestGetClinicData(IntegrationTestCase):
 		self.assertIn("cannot be before", response.message)
 
 	def test_get_returns_records(self):
-		with stub_request(method="GET", args={"start_date": "2026-01-01", "end_date": "2026-12-31"}) as response:
+		with stub_request(
+			method="GET", args={"start_date": "2026-01-01", "end_date": "2026-12-31"}
+		) as response:
 			api.get_clinic_data()
 		self.assertEqual(response.status, "success")
 		self.assertIn("data", response)
@@ -992,6 +1125,37 @@ class TestGetClinicData(IntegrationTestCase):
 			api.get_clinic_data()
 		self.assertEqual(response.status, "error")
 		self.assertIn("cannot be before", response.message)
+
+	def test_post_records_an_external_facility(self):
+		body = {"employee": self.employee, "facility": "Naivasha Sub-County Hospital", "sick_off_given": 3}
+		with stub_request(json_body=body) as response:
+			api.get_clinic_data()
+		self.assertEqual(response.status, "success")
+		# A facility on its own marks the check-in as external.
+		self.assertEqual(response.data["is_external"], 1)
+		self.assertEqual(response.data["facility"], "Naivasha Sub-County Hospital")
+		self.assertEqual(response.data["sick_off_given"], 3)
+
+		with stub_request(
+			method="GET", args={"start_date": "2026-01-01", "end_date": "2099-12-31"}
+		) as response:
+			api.get_clinic_data()
+		mine = [r for r in response.data if r["employee"] == self.employee]
+		self.assertEqual(mine[0]["facility"], "Naivasha Sub-County Hospital")
+		self.assertEqual(mine[0]["sick_off_given"], 3)
+
+	def test_post_external_requires_a_facility(self):
+		with stub_request(json_body={"employee": self.employee, "is_external": 1}) as response:
+			api.get_clinic_data()
+		self.assertEqual(response.status, "error")
+		self.assertIn("facility", response.message)
+
+	def test_post_rejects_negative_sick_off(self):
+		body = {"employee": self.employee, "facility": "Elsewhere", "sick_off_given": -1}
+		with stub_request(json_body=body) as response:
+			api.get_clinic_data()
+		self.assertEqual(response.status, "error")
+		self.assertIn("negative", response.message)
 
 	def test_post_requires_json(self):
 		with self.assertRaises(frappe.ValidationError):
@@ -1053,9 +1217,7 @@ class TestPortability(IntegrationTestCase):
 		self.assertEqual(resp["status"], "sync complete")
 		self.assertEqual(len(captured), 2, "expected the register + deactivate sweeps")
 		for kwargs in captured:
-			self.assertNotIn(
-				"fields", kwargs, "sync_members selected Employee columns it does not use"
-			)
+			self.assertNotIn("fields", kwargs, "sync_members selected Employee columns it does not use")
 			self.assertEqual(kwargs.get("pluck"), "name")
 
 	def test_sick_leave_survives_a_site_without_workflow_state(self):
@@ -1094,7 +1256,7 @@ class TestJobOfferBiodata(IntegrationTestCase):
 
 	# fieldname -> the Job Applicant field it replaces (None = standard on
 	# Job Offer already, or new to the offer).
-	COVA_BLOCK = {
+	COVA_BLOCK: ClassVar[dict] = {
 		"national_id": "custom_national_id",
 		"date_of_birth": "custom_date_of_birth",
 		"gender": "custom_gender",
@@ -1226,9 +1388,7 @@ class TestCovaPostFailures(IntegrationTestCase):
 		self.assertEqual(resp["error"], "unknown test package")
 		# A refusal must leave the request looking unsent — that checkbox is what
 		# the form and the bulk re-send read to decide there is work to redo.
-		self.assertEqual(
-			frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 0
-		)
+		self.assertEqual(frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 0)
 
 	def test_received_by_cova_is_set_from_the_reply_and_never_cleared(self):
 		request = frappe.get_doc(
@@ -1248,30 +1408,32 @@ class TestCovaPostFailures(IntegrationTestCase):
 		with patch.object(api, "make_post_request", return_value=reply):
 			self._call({"action": "submit_test_request", "request_name": request.name})
 
-		self.assertEqual(
-			frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 1
-		)
-		# The same reply carries the member COVA accepted it for.
-		self.assertEqual(
-			frappe.db.get_value("Clinic Test Request", request.name, "cova_member_id"), "CHSC00014878"
-		)
-
+		self.assertEqual(frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 1)
 		# A re-send that fails does not un-deliver the copy COVA already has;
 		# clearing the box would send someone chasing a request that is in.
 		error = self._http_error(500, {"message": "gateway down"})
 		with patch.object(api, "make_post_request", side_effect=error):
 			self._call({"action": "submit_test_request", "request_name": request.name})
 
-		self.assertEqual(
-			frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 1
-		)
+		self.assertEqual(frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova"), 1)
 
-	def test_a_later_reply_does_not_overwrite_the_member_id(self):
+	def test_the_reply_fills_the_linked_members_id_once(self):
+		member = frappe.get_doc(
+			{
+				"doctype": "Cova Members",
+				"member_type": "Active",
+				"employee": self.employee,
+				"full_name": "Api Tester",
+				"payroll_number": self.payroll,
+				"status": "Active",
+			}
+		).insert()
 		request = frappe.get_doc(
 			{
 				"doctype": "Clinic Test Request",
 				"member_type": "Active",
 				"employee": self.employee,
+				"cova_member": member.name,
 				"payroll_number": self.payroll,
 				"status": "Pending",
 				"test_package": "Annual Medical",
@@ -1285,9 +1447,9 @@ class TestCovaPostFailures(IntegrationTestCase):
 			with patch.object(api, "make_post_request", return_value=reply):
 				self._call({"action": "submit_test_request", "request_name": request.name})
 
-		self.assertEqual(
-			frappe.db.get_value("Clinic Test Request", request.name, "cova_member_id"), "CHSC00000001"
-		)
+		# The ID lives on the Cova Member the request links to, and a later
+		# reply does not overwrite the one it was first matched on.
+		self.assertEqual(frappe.db.get_value("Cova Members", member.name, "cova_member_id"), "CHSC00000001")
 
 	def test_sync_members_counts_a_rejection_with_its_reason(self):
 		error = self._http_error(400, {"message": "nationalId is required"})
@@ -1315,9 +1477,7 @@ class TestCovaPostFailures(IntegrationTestCase):
 		self.assertGreater(resp["duplicates"], 0)
 		self.assertEqual(resp["register_failed"], 0)
 		# It is still a member — COVA handed back the id.
-		self.assertEqual(
-			frappe.db.get_value("Employee", self.employee, "cova_member_id"), "CHSC00015643"
-		)
+		self.assertEqual(frappe.db.get_value("Employee", self.employee, "cova_member_id"), "CHSC00015643")
 
 	def test_preemployment_registration_reports_a_rejection(self):
 		error = self._http_error(400, {"message": "dateOfBirth is required"})
@@ -1369,7 +1529,8 @@ class TestOnboarding(IntegrationTestCase):
 	# Configured once when the app is installed, not part of the day-to-day walk,
 	# so it was dropped from the onboarding panel and is exempt here. Its step
 	# still exists as a Form Tour — see test_the_settings_step_walks_the_single.
-	NOT_ONBOARDED = {"Cova Clinic Settings"}
+	# Gate Pass is upande_ta's own doctype, linked in only on sites that run it.
+	NOT_ONBOARDED: ClassVar[set] = {"Cova Clinic Settings", "Gate Pass"}
 
 	def test_every_sidebar_doctype_has_a_step(self):
 		sidebar = frappe.get_doc("Workspace Sidebar", "Cova Clinic")
@@ -1517,7 +1678,9 @@ class TestOnboarding(IntegrationTestCase):
 		app_path = frappe.get_app_path("cova_clinic_integration")
 		with open(f"{app_path}/public/js/form_walkthrough.js") as handle:
 			source = handle.read()
-		mapped = dict(re.findall(r'"([^"]+)":\s*"([^"]+ Walkthrough|Cova Pre-Employment on Job Offer)"', source))
+		mapped = dict(
+			re.findall(r'"([^"]+)":\s*"([^"]+ Walkthrough|Cova Pre-Employment on Job Offer)"', source)
+		)
 
 		for tour_name in frappe.get_all(
 			"Form Tour", filters={"module": "Cova Clinic Integration"}, pluck="name"
@@ -1541,9 +1704,7 @@ class TestOnboarding(IntegrationTestCase):
 			highlighted = sorted(
 				{step.fieldname for step in tour.steps if meta.get_field(step.fieldname).read_only}
 			)
-			self.assertEqual(
-				highlighted, [], f"{tour_name} highlights read-only field(s): {highlighted}"
-			)
+			self.assertEqual(highlighted, [], f"{tour_name} highlights read-only field(s): {highlighted}")
 
 	def test_every_walkthrough_ends_by_asking_for_the_entry(self):
 		for tour_name in frappe.get_all(
@@ -1577,7 +1738,9 @@ class TestOnboarding(IntegrationTestCase):
 		self.assertEqual(fieldnames[0], "company")
 
 		meta = frappe.get_meta(tour.reference_doctype)
-		gated = [fn for fn in fieldnames if (meta.get_field(fn).depends_on or "").find("cova_clinic_company") >= 0]
+		gated = [
+			fn for fn in fieldnames if (meta.get_field(fn).depends_on or "").find("cova_clinic_company") >= 0
+		]
 		for fieldname in gated:
 			self.assertGreater(fieldnames.index(fieldname), 0)
 
@@ -1616,7 +1779,9 @@ class TestPayrollNumberOnDeskRecords(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 		self.assertTrue(request.payroll_number, "the request was saved with no payroll number")
-		self.assertEqual(request.payroll_number, api.employee_payroll_id(frappe.get_doc("Employee", employee)))
+		self.assertEqual(
+			request.payroll_number, api.employee_payroll_id(frappe.get_doc("Employee", employee))
+		)
 
 	def test_a_fetched_employee_number_still_wins(self):
 		"""Only an empty value is filled — inbound resolution accepts either, and

@@ -8,8 +8,14 @@
 {% block footer %}{% endblock %}
 
 {% block page_content %}
+{# The sections this viewer is ticked for in Cova Clinic Settings; the rail
+   shows only these, and every endpoint refuses the rest on its own. #}
+{# data-controls-js: Frappe's form controls, loaded by the page script so every
+   date and time uses Frappe's date picker. Not included through a script block:
+   a template that defines one stops Frappe inlining health-report.js. #}
+<div id="cova-clinic-app" data-sections="{{ allowed_sections | join(',') }}"
+     data-controls-js="{{ bundled_asset('controls.bundle.js') }}">
 {% raw %}
-<div id="cova-clinic-app">
 
   <!-- Floating sidebar -->
   <nav class="cdd-rail" id="cdd-rail" aria-label="Clinic dashboards">
@@ -29,7 +35,19 @@
 
     <ul class="cdd-rail-nav" id="cdd-rail-nav">
       <li>
-        <button class="cdd-nav-item is-active" data-view="health" title="Disease &amp; Health">
+        <button class="cdd-nav-item" data-view="overview" title="Overview">
+          <span class="cdd-nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>
+              <rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>
+            </svg>
+          </span>
+          <span class="cdd-nav-label">Overview</span>
+        </button>
+      </li>
+      <li>
+        <button class="cdd-nav-item" data-view="health" title="Disease &amp; Health">
           <span class="cdd-nav-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"
                  stroke-linecap="round" stroke-linejoin="round">
@@ -99,28 +117,59 @@
           <span class="cdd-nav-label">Test Results</span>
         </button>
       </li>
+      <li>
+        <button class="cdd-nav-item" data-view="tickets" title="Clinic Tickets">
+          <span class="cdd-nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8a2 2 0 0 0 2-2h14a2 2 0 0 0 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 0-2 2H5a2 2 0 0 0-2-2v-2a2 2 0 0 0 0-4z"/>
+              <path d="M13 6v2M13 11v2M13 16v2"/>
+            </svg>
+          </span>
+          <span class="cdd-nav-label">Clinic Tickets</span>
+        </button>
+      </li>
+      <li>
+        <button class="cdd-nav-item" data-view="schedules" title="Test Scheduling">
+          <span class="cdd-nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2"/>
+              <path d="M16 2v4M8 2v4M3 10h18M8 14h2M14 14h2M8 18h2"/>
+            </svg>
+          </span>
+          <span class="cdd-nav-label">Test Scheduling</span>
+        </button>
+      </li>
+      <li>
+        <button class="cdd-nav-item" data-view="accidents" title="Work Accidents">
+          <span class="cdd-nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+              <path d="M12 9v4M12 17h.01"/>
+            </svg>
+          </span>
+          <span class="cdd-nav-label">Work Accidents</span>
+        </button>
+      </li>
     </ul>
 
 {% endraw %}
-    <!-- Rail footer: the way back into the desk, then who is signed in. -->
-    <a class="cdd-rail-exit" href="{{ desk_url }}" title="Back to Desk">
-{% raw %}
-      <span class="cdd-nav-icon" aria-hidden="true">
+    <!-- Rail footer, pinned to the bottom: home (back to the desk), then who is signed in. -->
+    <div class="cdd-rail-foot">
+      <a class="cdd-rail-home" href="{{ desk_url }}" title="Back to Desk" aria-label="Back to Desk">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9"
-             stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-          <path d="M16 17l-5-5 5-5M11 12h10"/>
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>
         </svg>
-      </span>
-      <span class="cdd-nav-label">Back to Desk</span>
-    </a>
-{% endraw %}
-    <div class="cdd-rail-user" title="{{ viewer.id }}">
-      <span class="cdd-rail-avatar" aria-hidden="true">{{ viewer.initials }}</span>
-      <span class="cdd-rail-who">
-        <span class="cdd-rail-who-name">{{ viewer.full_name }}</span>
-        <span class="cdd-rail-who-role">{{ viewer.role_label or viewer.id }}</span>
-      </span>
+      </a>
+      <div class="cdd-rail-user" title="{{ viewer.id }}">
+        <span class="cdd-rail-avatar" aria-hidden="true">{{ viewer.initials }}</span>
+        <span class="cdd-rail-who">
+          <span class="cdd-rail-who-name">{{ viewer.full_name }}</span>
+        </span>
+      </div>
     </div>
 {% raw %}
   </nav>
@@ -128,7 +177,7 @@
   <!-- Main -->
   <main class="cdd-main" id="cdd-main">
     <div class="cdd-band">
-      <div>
+      <div class="cdd-band-title">
         <h2 id="cdd-title">Disease &amp; Health Monthly Report</h2>
       </div>
       <div class="cdd-actions">
@@ -139,10 +188,14 @@
 
     <!-- Only this scrolls; the band above it stays put. -->
     <div class="cdd-scroll" id="cdd-scroll">
-      <div class="cdd-filters" id="cdd-filters"></div>
+      <div class="cdd-filters" id="cdd-filters">
+        <div class="cdd-skeleton-filter"></div><div class="cdd-skeleton-filter"></div><div class="cdd-skeleton-filter"></div>
+      </div>
 
       <div class="cdd-skeleton" id="cdd-loading" style="display:none;">
         <div class="cdd-kpis">
+          <div class="cdd-kpi"><div class="cdd-skeleton-box" style="height:32px; margin-bottom:8px;"></div><div class="cdd-skeleton-box" style="height:12px; width:70%;"></div></div>
+          <div class="cdd-kpi"><div class="cdd-skeleton-box" style="height:32px; margin-bottom:8px;"></div><div class="cdd-skeleton-box" style="height:12px; width:70%;"></div></div>
           <div class="cdd-kpi"><div class="cdd-skeleton-box" style="height:32px; margin-bottom:8px;"></div><div class="cdd-skeleton-box" style="height:12px; width:70%;"></div></div>
           <div class="cdd-kpi"><div class="cdd-skeleton-box" style="height:32px; margin-bottom:8px;"></div><div class="cdd-skeleton-box" style="height:12px; width:70%;"></div></div>
           <div class="cdd-kpi"><div class="cdd-skeleton-box" style="height:32px; margin-bottom:8px;"></div><div class="cdd-skeleton-box" style="height:12px; width:70%;"></div></div>
@@ -180,6 +233,19 @@
       <div class="cdd-trend-status" id="cdd-trend-status"></div>
       <div class="cdd-trend-body" id="cdd-trend-body"><div class="cdd-trend-scroll" id="cdd-trend-scroll"><canvas id="c-trend-modal"></canvas></div></div>
     </div>
+  </div>
+
+  <!-- Action forms (Request Medical Attention, Schedule Tests) -->
+  <div class="cdd-form-modal" id="cdd-form-modal" role="dialog" aria-modal="true" aria-labelledby="cdd-form-title">
+    <form class="cdd-form-dialog" id="cdd-form" novalidate>
+      <div class="cdd-modal-header">
+        <h3 id="cdd-form-title"></h3>
+        <button type="button" class="cdd-modal-close" id="cdd-form-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="cdd-form-body" id="cdd-form-body"></div>
+      <div class="cdd-form-status" id="cdd-form-status" role="status"></div>
+      <div class="cdd-form-foot" id="cdd-form-foot"></div>
+    </form>
   </div>
 
   <div class="cdd-modal-overlay" id="cdd-emp-modal">

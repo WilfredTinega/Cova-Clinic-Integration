@@ -51,10 +51,15 @@ body { background: var(--cdd-cream); }
 }
 .cdd-rail.is-collapsed { width: var(--cdd-rail-w-collapsed); }
 
+/* Sits on the rail's right border, halfway down it: right:-11px centres the
+   22px button on the 1px line, top:50% + translateY centres it vertically. */
 .cdd-rail-toggle {
   position: absolute;
-  top: 22px;
+  top: 50%;
+  transform: translateY(-50%);
   right: -11px;
+  z-index: 1;
+  box-shadow: 0 2px 6px rgba(17,17,17,0.08);
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -75,6 +80,7 @@ body { background: var(--cdd-cream); }
   margin-left: 2px;
   transition: transform .18s ease;
 }
+.cdd-rail-toggle:hover { color: var(--cdd-accent); border-color: var(--cdd-accent); }
 .cdd-rail.is-collapsed .cdd-chevron { transform: rotate(-135deg); margin-left: -2px; }
 
 .cdd-rail-brand {
@@ -140,10 +146,6 @@ body { background: var(--cdd-cream); }
 .cdd-rail-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .cdd-rail-who-name {
   font-size: 12.5px; font-weight: 650; color: var(--cdd-ink);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.cdd-rail-who-role {
-  font-size: 10.5px; color: var(--cdd-ink-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -629,6 +631,11 @@ html, body { height: 100%; overflow: hidden; }
 /* Grouped lists (per employee / per day): count, in, out, then the span. */
 .cdd-punch-cols-emp, .cdd-punch-row-emp { grid-template-columns: minmax(0, 1fr) 46px 36px 36px 108px; }
 .cdd-punch-cols-emp { margin-top: 4px; }
+/* Clinic stays: first/last IN and OUT, then the time spent. */
+.cdd-punch-cols-stay, .cdd-punch-row-stay { grid-template-columns: minmax(0, 1fr) repeat(4, 44px) 58px; gap: 8px; }
+@media (max-width: 480px) {
+  .cdd-punch-cols-stay, .cdd-punch-row-stay { grid-template-columns: minmax(0, 1fr) repeat(4, 38px) 48px; gap: 4px; font-size: 12px; }
+}
 .cdd-punch-n { font-weight: 700; font-variant-numeric: tabular-nums; }
 .cdd-punch-who { font-weight: 600; color: var(--cdd-ink); overflow-wrap: anywhere; }
 .cdd-punch-who { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -791,3 +798,229 @@ a.cdd-visit-date:focus-visible .cdd-visit-open { opacity: .7; }
 .cdd-table-wrap::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ── Rail footer: home icon and the signed-in user, pinned to the bottom ── */
+.cdd-rail-foot {
+  margin-top: auto;               /* pushes the footer to the foot of the rail */
+  display: flex; align-items: center; gap: 4px;
+  border-top: 1px solid var(--cdd-hairline);
+  padding-top: 10px;
+}
+/* One row: the user takes the width, the home icon sits at its right. */
+.cdd-rail-foot .cdd-rail-user { flex: 1 1 auto; border-top: 0; padding: 6px 4px 6px 10px; }
+.cdd-rail-home {
+  display: inline-flex; align-items: center; justify-content: center;
+  order: 2; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px;
+  color: var(--cdd-ink-muted); text-decoration: none;
+  transition: color .14s, background .14s;
+}
+.cdd-rail-home:hover, .cdd-rail-home:focus-visible {
+  color: var(--cdd-ink); background: var(--cdd-wash); text-decoration: none;
+}
+/* Collapsed, the rail is too narrow for a row: avatar above, home below. */
+.cdd-rail.is-collapsed .cdd-rail-foot { flex-direction: column; }
+.cdd-rail.is-collapsed .cdd-rail-foot .cdd-rail-user { padding: 6px 0; }
+@media (max-width: 860px) {
+  .cdd-rail-foot { margin-top: 0; margin-left: auto;
+    border-top: 0; border-left: 1px solid var(--cdd-hairline); padding: 0 0 0 10px; }
+  .cdd-rail-foot .cdd-rail-user { padding-top: 0; }
+}
+
+/* ── Skeletons for the filter bar and the drill-down panels ──────── */
+.cdd-skeleton-filter {
+  width: 140px; height: 34px; border-radius: 8px;
+  background: var(--cdd-cream); animation: cdd-pulse 2s ease-in-out infinite;
+}
+.cdd-skeleton-list { padding: 4px 0; }
+.cdd-skeleton-list .cdd-skeleton-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 52px 52px 62px; gap: 10px;
+  padding: 11px 0; border-bottom: 1px solid var(--cdd-hairline);
+}
+.cdd-skeleton-list .cdd-skeleton-box { height: 13px; }
+#cdd-view.is-loading { display: none; }
+
+/* ── Action bar and forms (Request Medical Attention, Schedule Tests) ── */
+.cdd-view-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 0 0 14px; }
+.cdd-primary {
+  padding: 9px 16px; border: 1px solid var(--cdd-ink); border-radius: 8px;
+  background: var(--cdd-ink); color: var(--cdd-white); font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background .14s, border-color .14s, opacity .14s;
+}
+.cdd-primary:hover { background: var(--cdd-accent); border-color: var(--cdd-accent); }
+.cdd-primary[disabled] { opacity: .55; cursor: progress; }
+.cdd-secondary {
+  padding: 9px 16px; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.cdd-secondary:hover { border-color: var(--cdd-ink); }
+
+.cdd-form-modal {
+  position: fixed; inset: 0; z-index: 70; display: none;
+  background: rgba(17,17,17,0.45); padding: 24px;
+  align-items: center; justify-content: center;
+}
+.cdd-form-modal.is-open { display: flex; }
+.cdd-form-dialog {
+  width: min(560px, 100%); max-height: 100%; margin: 0;
+  background: var(--cdd-white); border-radius: 14px;
+  display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(17,17,17,0.3);
+}
+.cdd-form-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 18px 24px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px;
+}
+.cdd-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cdd-field.is-wide { grid-column: 1 / -1; }
+.cdd-field > span { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--cdd-ink-muted); }
+.cdd-field input, .cdd-field select, .cdd-field textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font: inherit; font-size: 13px;
+}
+.cdd-field textarea { min-height: 84px; resize: vertical; }
+.cdd-field input:focus, .cdd-field select:focus, .cdd-field textarea:focus {
+  outline: none; border-color: var(--cdd-accent); box-shadow: 0 0 0 3px rgba(42,120,214,0.15);
+}
+.cdd-field small { font-size: 11.5px; color: var(--cdd-ink-muted); }
+.cdd-check { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: var(--cdd-ink); }
+.cdd-check input { width: auto; }
+.cdd-preview { grid-column: 1 / -1; border: 1px solid var(--cdd-hairline); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+.cdd-preview b { font-variant-numeric: tabular-nums; }
+.cdd-preview ul { margin: 8px 0 0; padding-left: 18px; color: var(--cdd-ink-muted); max-height: 140px; overflow-y: auto; }
+.cdd-form-status { padding: 0 24px; font-size: 13px; }
+.cdd-form-status:empty { display: none; }
+.cdd-form-status.is-error { color: #b42318; }
+.cdd-form-status.is-ok { color: #067647; }
+.cdd-form-foot {
+  display: flex; justify-content: flex-end; gap: 8px; padding: 14px 24px 18px;
+  border-top: 1px solid var(--cdd-hairline); margin-top: 12px;
+}
+@media (max-width: 560px) {
+  .cdd-form-body { grid-template-columns: 1fr; }
+  .cdd-form-modal { padding: 10px; }
+}
+
+.cdd-toast {
+  position: fixed; right: 24px; bottom: 24px; z-index: 80; max-width: 420px;
+  padding: 12px 16px; border-radius: 10px; background: var(--cdd-ink); color: var(--cdd-white);
+  font-size: 13px; box-shadow: 0 10px 30px rgba(17,17,17,0.25); transition: opacity .5s, transform .5s;
+}
+.cdd-toast a { color: var(--cdd-white); font-weight: 700; text-decoration: underline; }
+.cdd-toast.is-gone { opacity: 0; transform: translateY(8px); }
+
+/* ── Tabs inside a section (Clinic Desk / Analytics, Schedule / Analytics) ── */
+.cdd-tabs { display: inline-flex; gap: 4px; padding: 4px; margin: 0 0 16px;
+  background: var(--cdd-cream); border: 1px solid var(--cdd-hairline); border-radius: 10px; }
+.cdd-tab { padding: 7px 16px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--cdd-ink-muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+.cdd-tab:hover { color: var(--cdd-ink); }
+.cdd-tab.is-active { background: var(--cdd-white); color: var(--cdd-ink); box-shadow: 0 1px 3px rgba(17,17,17,0.1); }
+.cdd-tabs + .cdd-view-actions { margin-top: -52px; }
+.cdd-arrive { padding: 6px 12px; font-size: 12px; white-space: nowrap; }
+.cdd-muted { color: var(--cdd-ink-muted); }
+.cdd-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: var(--cdd-cream); color: var(--cdd-ink-muted); }
+.cdd-tag-urgent { background: #fef0c7; color: #93370d; }
+.cdd-tag-emergency { background: #fee4e2; color: #b42318; }
+@media (max-width: 640px) { .cdd-tabs + .cdd-view-actions { margin-top: 0; } }
+
+/* ── Overview: four even cards, one headline figure each ─────────── */
+.cdd-ov-grid {
+  display: grid; gap: 16px; margin-bottom: 22px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+/* Wide screens fit every card on one row (up to five), so none is left alone below. */
+@media (min-width: 1200px) { .cdd-ov-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); } }
+.cdd-ov-card {
+  display: flex; flex-direction: column; min-width: 0;
+  background: var(--cdd-white); border: 1px solid var(--cdd-hairline); border-radius: 14px;
+  padding: 18px 20px;
+}
+.cdd-ov-title {
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--cdd-ink-muted); margin-bottom: 12px;
+}
+.cdd-ov-main {
+  font-size: 34px; font-weight: 800; line-height: 1; letter-spacing: -0.02em;
+  color: var(--cdd-ink); font-variant-numeric: tabular-nums;
+}
+.cdd-ov-sub { margin-top: 6px; font-size: 12.5px; color: var(--cdd-ink-muted); }
+.cdd-ov-rest, .cdd-ov-note {
+  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--cdd-hairline);
+}
+.cdd-ov-sub + .cdd-ov-rest, .cdd-ov-sub + .cdd-ov-note { margin-top: 16px; }
+.cdd-ov-rest { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.cdd-ov-rest div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cdd-ov-rest b { font-size: 18px; font-weight: 750; color: var(--cdd-ink); font-variant-numeric: tabular-nums; }
+.cdd-ov-rest span { font-size: 12px; color: var(--cdd-ink-muted); }
+.cdd-ov-note { font-size: 12.5px; color: var(--cdd-ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Frappe date / time pickers ──────────────────────────────────── */
+.cdd-fctl { width: 100%; min-width: 0; }
+.cdd-fctl .form-group, .cdd-fctl .control-input-wrapper, .cdd-fctl .control-input { margin: 0; width: 100%; }
+.cdd-fctl .control-label, .cdd-fctl .help-box { display: none; }
+.cdd-fctl input.form-control {
+  width: 100%; height: auto; padding: 8px 10px;
+  border: 1px solid var(--cdd-hairline); border-radius: 8px; box-shadow: none;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 13px; line-height: 1.35;
+}
+.cdd-fctl input.form-control:focus { outline: none; border-color: var(--cdd-accent); box-shadow: 0 0 0 3px rgba(42,120,214,0.15); }
+.cdd-form-body .cdd-fctl input.form-control { padding: 9px 11px; }
+/* The picker opens over the filter bar and the action dialog. */
+.datepicker { z-index: 1100 !important; }
+
+/* ── Styled dropdowns: the button and the option list ────────────── */
+.cdd-select-native { display: none !important; }
+.cdd-select {
+  width: 100%; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font: inherit; font-size: 13px; text-align: left;
+  cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.cdd-form-body .cdd-select { padding: 9px 11px; }
+.cdd-select:hover { border-color: var(--cdd-ink-muted); }
+.cdd-select:focus-visible, .cdd-select[aria-expanded="true"] {
+  outline: none; border-color: var(--cdd-accent); box-shadow: 0 0 0 3px rgba(42,120,214,0.15);
+}
+.cdd-select.is-placeholder .cdd-select-text { color: var(--cdd-ink-muted); }
+.cdd-select-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cdd-select-caret { flex: none; color: var(--cdd-ink-muted); transition: transform .15s; }
+.cdd-select[aria-expanded="true"] .cdd-select-caret { transform: rotate(180deg); }
+.cdd-select-list {
+  position: fixed; z-index: 1100; box-sizing: border-box; max-height: 280px; max-width: min(360px, 92vw);
+  overflow-y: auto; padding: 6px;
+  background: var(--cdd-white); border: 1px solid var(--cdd-hairline); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(17,17,17,0.14);
+  font-family: inherit; font-size: 13px;
+}
+.cdd-select-opt {
+  padding: 8px 10px; border-radius: 7px; color: var(--cdd-ink); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cdd-select-opt:hover, .cdd-select-opt:focus { outline: none; background: var(--cdd-cream); }
+.cdd-select-opt.is-empty { color: var(--cdd-ink-muted); }
+.cdd-select-opt.is-selected { background: var(--cdd-ink); color: var(--cdd-white); font-weight: 600; }
+/* Frappe's hover-tooltip text; the desk hides it, the website CSS does not. */
+.cdd-fctl .tooltip-content { display: none; }
+.cdd-fctl .input-max-width { max-width: none; }
+
+.cdd-view-actions .cdd-secondary { padding: 9px 16px; }
+.cdd-progress { display: inline-block; vertical-align: middle; width: 72px; height: 6px; border-radius: 999px;
+  background: var(--cdd-cream); overflow: hidden; margin-right: 6px; }
+.cdd-progress span { display: block; height: 100%; background: var(--cdd-accent); border-radius: 999px; }
+.cdd-preview-note { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--cdd-hairline);
+  font-size: 12.5px; color: #93370d; }
+
+/* Section tabs as separate buttons, the active one filled. */
+.cdd-tabs { display: inline-flex; gap: 8px; padding: 0; background: transparent; border: 0; border-radius: 0; }
+.cdd-tab {
+  padding: 9px 18px; border: 1px solid var(--cdd-hairline); border-radius: 8px;
+  background: var(--cdd-white); color: var(--cdd-ink); font-size: 13px; font-weight: 600; box-shadow: none;
+  transition: background .14s, color .14s, border-color .14s;
+}
+.cdd-tab:hover { border-color: var(--cdd-ink); color: var(--cdd-ink); }
+.cdd-tab.is-active { background: var(--cdd-ink); border-color: var(--cdd-ink); color: var(--cdd-white); box-shadow: none; }
+.cdd-tabs + .cdd-view-actions { margin-top: -54px; }
+
+.cdd-phone { color: var(--cdd-accent); font-weight: 600; text-decoration: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cdd-phone:hover { text-decoration: underline; }
+.cdd-field input[type="tel"], .cdd-field input[type="text"], .cdd-field input[type="number"] { box-sizing: border-box; }

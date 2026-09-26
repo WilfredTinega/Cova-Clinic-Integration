@@ -1,0 +1,106 @@
+{
+ "actions": [],
+ "creation": "2026-09-26 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "department",
+  "designation",
+  "column_break_dates",
+  "scheduled_from",
+  "scheduled_to",
+  "test_request",
+  "received_by_cova"
+ ],
+ "fields": [
+  {
+   "columns": 2,
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "employee.department",
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Department",
+   "options": "Department",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fetch_from": "employee.designation",
+   "fieldname": "designation",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Designation",
+   "options": "Designation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "columns": 1,
+   "description": "Defaults to the schedule's From date.",
+   "fieldname": "scheduled_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Scheduled From"
+  },
+  {
+   "description": "Defaults to the schedule's To date.",
+   "fieldname": "scheduled_to",
+   "fieldtype": "Date",
+   "label": "Scheduled To"
+  },
+  {
+   "columns": 1,
+   "fieldname": "test_request",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Test Request",
+   "no_copy": 1,
+   "options": "Clinic Test Request",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "received_by_cova",
+   "fieldtype": "Check",
+   "label": "Received by Cova",
+   "no_copy": 1,
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-26 15:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Schedule Employee",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
