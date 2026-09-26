@@ -1,0 +1,219 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:CTP-{YYYY}-{####}",
+ "creation": "2026-09-26 20:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "test_group",
+  "test_package",
+  "company",
+  "column_break_period",
+  "period_from",
+  "period_to",
+  "number_of_rounds",
+  "column_break_opts",
+  "send_to_cova",
+  "notes",
+  "metrics_section",
+  "total_employees",
+  "employees_per_round",
+  "column_break_m1",
+  "scheduled_employees",
+  "tested_employees",
+  "column_break_m2",
+  "remaining_employees",
+  "progress",
+  "status",
+  "rounds_section",
+  "rounds"
+ ],
+ "fields": [
+  {
+   "description": "From Cova Clinic Settings → Test Scheduling, e.g. Food Handler or Cholinesterase (sprayers).",
+   "fieldname": "test_group",
+   "fieldtype": "Autocomplete",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Test Group",
+   "reqd": 1
+  },
+  {
+   "fieldname": "test_package",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Test Package",
+   "options": "Test Package",
+   "read_only": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_period",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "period_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Period From",
+   "reqd": 1
+  },
+  {
+   "description": "Everyone in the group is to be tested between these dates.",
+   "fieldname": "period_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Period To",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "The period is split into this many rounds; each round sends a share of the group.",
+   "fieldname": "number_of_rounds",
+   "fieldtype": "Int",
+   "label": "Number of Test Rounds",
+   "non_negative": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_opts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "send_to_cova",
+   "fieldtype": "Check",
+   "label": "Send Requests to Cova"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes for the Clinic"
+  },
+  {
+   "fieldname": "metrics_section",
+   "fieldtype": "Section Break",
+   "label": "Metrics"
+  },
+  {
+   "fieldname": "total_employees",
+   "fieldtype": "Int",
+   "label": "Employees in the Group",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "employees_per_round",
+   "fieldtype": "Int",
+   "label": "Employees per Round",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_m1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scheduled_employees",
+   "fieldtype": "Int",
+   "label": "Scheduled",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "tested_employees",
+   "fieldtype": "Int",
+   "label": "Tested",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_m2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "remaining_employees",
+   "fieldtype": "Int",
+   "label": "Still to Schedule",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "progress",
+   "fieldtype": "Percent",
+   "in_list_view": 1,
+   "label": "Tested %",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nIn Progress\nCompleted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rounds_section",
+   "fieldtype": "Section Break",
+   "label": "Rounds"
+  },
+  {
+   "fieldname": "rounds",
+   "fieldtype": "Table",
+   "label": "Rounds",
+   "options": "Clinic Test Plan Round"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-26 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Test Plan",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "test_group",
+ "track_changes": 1
+}

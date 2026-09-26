@@ -18,7 +18,7 @@ SICK_LEAVE_TYPE = "Sick Leave (Full Pay)"
 # The automatic link crawl reaches Company and trips the Fiscal Year overlap on
 # a site that already has one. These fixtures build the Employee they need
 # themselves (see cova_clinic_integration.testing.make_employee).
-IGNORE_TEST_RECORD_DEPENDENCIES = ["Employee", "Company", "Leave Application"]
+IGNORE_TEST_RECORD_DEPENDENCIES = ["Employee", "Company", "Leave Application", "Department", "Designation", "Clinic Test Schedule", "Clinic Ticket"]
 
 def _last_sick_leave_error() -> str:
 	"""Whatever create_sick_leave_application last logged, for a failing assert."""

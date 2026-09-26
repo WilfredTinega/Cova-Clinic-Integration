@@ -1,0 +1,21 @@
+{
+ "action": "Go to Page",
+ "action_label": "Open the test plans",
+ "creation": "2026-09-26 20:00:00.000000",
+ "description": "<b>What this is.</b> One plan per test group — Food Handler, Cholinesterase for the sprayers and so on. It says how many employees the group covers, the period in which all of them are to be tested, and in how many rounds.<br><br><b>Schedule Next Round</b> sends the round's share to the clinic. Anyone on leave during the round is left out and carried into the next one, so only employees who are present are scheduled.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 0,
+ "is_complete": 0,
+ "is_single": 0,
+ "is_skipped": 0,
+ "modified": "2026-09-26 20:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Plan the Year's Medical Tests",
+ "owner": "Administrator",
+ "path": "List/Clinic Test Plan",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Test Plans — who is tested, when and in how many rounds",
+ "validate_action": 0
+}

@@ -4,6 +4,7 @@
 import frappe
 from frappe.model.document import Document
 
+from cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket import mark_visited
 from cova_clinic_integration.member_link import set_cova_member
 
 SICK_LEAVE_TYPE = "Sick Leave (Full Pay)"
@@ -23,11 +24,14 @@ class ClinicCheckin(Document):
 		employee: DF.Link
 		employee_payroll_number: DF.Data | None
 		end_date: DF.Date | None
+		facility: DF.Data | None
 		full_name: DF.Data | None
+		is_external: DF.Check
 		leave_application: DF.Link | None
 		log_type: DF.Literal["", "IN", "OUT"]
 		payroll_number: DF.Data | None
 		reason: DF.LongText | None
+		sick_off_given: DF.Int
 		start_date: DF.Date | None
 		time: DF.Datetime | None
 		time_in: DF.Datetime | None
@@ -38,11 +42,26 @@ class ClinicCheckin(Document):
 		# Punches and sick-offs both name their person in `employee`; what tells
 		# them apart is the payload. See member_link for the lookup.
 		set_cova_member(self)
+		self.validate_external_facility()
+
+	def validate_external_facility(self):
+		# Facility and the sick off it gave only mean something for an external
+		# visit; clear them otherwise so a stale value never reads as one.
+		if not self.is_external:
+			self.facility = None
+			self.sick_off_given = 0
+			return
+		if not (self.facility or "").strip():
+			frappe.throw(frappe._("Facility is required for an external clinic check-in."))
+		if (self.sick_off_given or 0) < 0:
+			frappe.throw(frappe._("Sick Off Given cannot be negative."))
 
 	def after_insert(self):
 		# "Sick Leave Application" — auto-create an approved Sick Leave for the
 		# sick-off window and link it back onto this record.
 		self.create_sick_leave_application()
+		# The employee has reached the clinic: use up the ticket that sent them.
+		mark_visited(self)
 
 	def on_update(self):
 		# Also handle records that only get their sick-off window on a later save.

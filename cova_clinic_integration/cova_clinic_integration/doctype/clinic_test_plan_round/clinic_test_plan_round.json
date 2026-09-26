@@ -1,0 +1,103 @@
+{
+ "actions": [],
+ "creation": "2026-09-26 20:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "round_no",
+  "scheduled_from",
+  "scheduled_to",
+  "planned_employees",
+  "scheduled_employees",
+  "skipped_on_leave",
+  "status",
+  "clinic_test_schedule"
+ ],
+ "fields": [
+  {
+   "columns": 1,
+   "fieldname": "round_no",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Round",
+   "read_only": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "scheduled_from",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "From",
+   "reqd": 1
+  },
+  {
+   "columns": 2,
+   "fieldname": "scheduled_to",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "To",
+   "reqd": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "planned_employees",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Planned",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "scheduled_employees",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Scheduled",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "description": "Left out because they were on leave; they carry over to the next round.",
+   "fieldname": "skipped_on_leave",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "On Leave",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "default": "Planned",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Planned\nScheduled",
+   "read_only": 1
+  },
+  {
+   "columns": 1,
+   "fieldname": "clinic_test_schedule",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Schedule",
+   "no_copy": 1,
+   "options": "Clinic Test Schedule",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-26 20:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Clinic Test Plan Round",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

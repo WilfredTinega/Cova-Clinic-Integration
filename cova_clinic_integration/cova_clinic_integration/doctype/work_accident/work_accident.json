@@ -1,0 +1,358 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:WA-{YYYY}-{#####}",
+ "creation": "2026-09-26 22:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "payroll_number",
+  "column_break_emp",
+  "department",
+  "designation",
+  "company",
+  "accident_section",
+  "accident_date",
+  "accident_time",
+  "location",
+  "column_break_acc",
+  "accident_type",
+  "severity",
+  "body_part",
+  "description_section",
+  "description",
+  "witness",
+  "treatment_section",
+  "first_aider",
+  "first_aid_given",
+  "first_aid_details",
+  "column_break_treat",
+  "clinic_ticket",
+  "referred_to_hospital",
+  "hospital",
+  "time_lost_section",
+  "days_lost",
+  "lost_time_injury",
+  "column_break_lost",
+  "return_to_work_date",
+  "follow_up_section",
+  "root_cause",
+  "corrective_action",
+  "column_break_follow",
+  "status",
+  "reported_to_dosh",
+  "dosh_report_date",
+  "reported_by"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "employee.employee_number",
+   "fieldname": "payroll_number",
+   "fieldtype": "Data",
+   "label": "Payroll Number",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_emp",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "employee.department",
+   "fieldname": "department",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Department",
+   "options": "Department",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "employee.designation",
+   "fieldname": "designation",
+   "fieldtype": "Link",
+   "label": "Designation",
+   "options": "Designation",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "employee.company",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1
+  },
+  {
+   "fieldname": "accident_section",
+   "fieldtype": "Section Break",
+   "label": "The Accident"
+  },
+  {
+   "default": "Today",
+   "fieldname": "accident_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Date",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "accident_time",
+   "fieldtype": "Time",
+   "label": "Time"
+  },
+  {
+   "description": "Farm, block, greenhouse, packhouse, workshop…",
+   "fieldname": "location",
+   "fieldtype": "Data",
+   "label": "Where It Happened"
+  },
+  {
+   "fieldname": "column_break_acc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "accident_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Type of Accident",
+   "options": "Slip, Trip or Fall\nCut or Laceration\nStruck by Object\nCaught in Machinery\nManual Handling or Strain\nChemical Exposure\nBurn or Scald\nAnimal or Insect Bite\nVehicle\nElectrical\nOther",
+   "reqd": 1
+  },
+  {
+   "default": "Minor",
+   "description": "Minor: first aid only. Moderate: needed medical treatment. Serious: time off work. Fatal.",
+   "fieldname": "severity",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Severity",
+   "options": "Minor\nModerate\nSerious\nFatal",
+   "reqd": 1
+  },
+  {
+   "fieldname": "body_part",
+   "fieldtype": "Select",
+   "label": "Part of Body Injured",
+   "options": "\nHead\nEye\nFace\nNeck\nBack\nChest or Abdomen\nArm or Shoulder\nHand or Finger\nLeg or Knee\nFoot or Toe\nMultiple\nNone"
+  },
+  {
+   "fieldname": "description_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "What Happened",
+   "reqd": 1
+  },
+  {
+   "fieldname": "witness",
+   "fieldtype": "Data",
+   "label": "Witness"
+  },
+  {
+   "fieldname": "treatment_section",
+   "fieldtype": "Section Break",
+   "label": "Treatment"
+  },
+  {
+   "default": "0",
+   "fieldname": "first_aid_given",
+   "fieldtype": "Check",
+   "label": "First Aid Given"
+  },
+  {
+   "depends_on": "eval:doc.first_aid_given",
+   "fieldname": "first_aid_details",
+   "fieldtype": "Small Text",
+   "label": "First Aid Details"
+  },
+  {
+   "fieldname": "column_break_treat",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Issued when the employee was sent to the clinic.",
+   "fieldname": "clinic_ticket",
+   "fieldtype": "Link",
+   "label": "Clinic Ticket",
+   "no_copy": 1,
+   "options": "Clinic Ticket",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "referred_to_hospital",
+   "fieldtype": "Check",
+   "label": "Referred to Hospital"
+  },
+  {
+   "depends_on": "eval:doc.referred_to_hospital",
+   "fieldname": "hospital",
+   "fieldtype": "Data",
+   "label": "Hospital"
+  },
+  {
+   "fieldname": "time_lost_section",
+   "fieldtype": "Section Break",
+   "label": "Time Lost"
+  },
+  {
+   "default": "0",
+   "fieldname": "days_lost",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Days Off Work",
+   "non_negative": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when any work days were lost.",
+   "fieldname": "lost_time_injury",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Lost Time Injury",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_lost",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "return_to_work_date",
+   "fieldtype": "Date",
+   "label": "Back at Work On"
+  },
+  {
+   "fieldname": "follow_up_section",
+   "fieldtype": "Section Break",
+   "label": "Investigation and Follow-Up"
+  },
+  {
+   "fieldname": "root_cause",
+   "fieldtype": "Small Text",
+   "label": "Cause"
+  },
+  {
+   "fieldname": "corrective_action",
+   "fieldtype": "Small Text",
+   "label": "Action Taken to Prevent a Repeat"
+  },
+  {
+   "fieldname": "column_break_follow",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Reported",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Reported\nUnder Investigation\nClosed"
+  },
+  {
+   "default": "0",
+   "description": "Work injuries are reported to the Directorate of Occupational Safety and Health.",
+   "fieldname": "reported_to_dosh",
+   "fieldtype": "Check",
+   "label": "Reported to DOSH (WIBA)"
+  },
+  {
+   "depends_on": "eval:doc.reported_to_dosh",
+   "fieldname": "dosh_report_date",
+   "fieldtype": "Date",
+   "label": "Reported to DOSH On"
+  },
+  {
+   "fieldname": "reported_by",
+   "fieldtype": "Link",
+   "label": "Recorded By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "description": "The employee who gave first aid to the injured employee. Picking one marks first aid as given.",
+   "fieldname": "first_aider",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Attended By (First Aider)",
+   "options": "Employee"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-27 02:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Cova Clinic Integration",
+ "name": "Work Accident",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "HR User",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
+ "sort_field": "accident_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "employee_name",
+ "track_changes": 1
+}

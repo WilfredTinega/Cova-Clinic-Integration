@@ -16,10 +16,12 @@ class ClinicTestRequest(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		clinic_test_schedule: DF.Link | None
 		cova_member: DF.Link | None
-		cova_member_id: DF.Data | None
 		cova_raw: DF.LongText | None
 		date_of_birth: DF.Date | None
+		department: DF.Link | None
+		designation: DF.Link | None
 		employee: DF.Link | None
 		gender: DF.Link | None
 		linked_test_result: DF.Link | None
@@ -32,6 +34,7 @@ class ClinicTestRequest(Document):
 		scheduled_from: DF.Date
 		scheduled_to: DF.Date
 		status: DF.Literal["", "Pending", "Completed", "Cancelled"]
+		test_group: DF.Data | None
 		test_package: DF.Link
 	# end: auto-generated types
 

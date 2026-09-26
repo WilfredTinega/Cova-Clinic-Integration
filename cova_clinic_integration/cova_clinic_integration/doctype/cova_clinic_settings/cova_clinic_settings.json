@@ -16,7 +16,11 @@
   "test_request_endpoint",
   "pre_employement_endpoint",
   "column_break_ipdy",
-  "access_token"
+  "access_token",
+  "test_scheduling_tab",
+  "test_groups",
+  "dashboard_access_tab",
+  "dashboard_viewers"
  ],
  "fields": [
   {
@@ -76,11 +80,35 @@
    "fieldname": "settings_tab",
    "fieldtype": "Tab Break",
    "label": "Settings"
+  },
+  {
+   "fieldname": "dashboard_access_tab",
+   "fieldtype": "Tab Break",
+   "label": "Dashboard Access"
+  },
+  {
+   "description": "The clinic dashboards show employees' medical data. Once anyone is listed here, only these users (and Administrator) can open them, and each sees only the dashboard sections ticked on their row; HR roles alone no longer do. Leave empty to let the HR roles see every section.",
+   "fieldname": "dashboard_viewers",
+   "fieldtype": "Table",
+   "label": "Dashboard Viewers",
+   "options": "Clinic Dashboard Viewer"
+  },
+  {
+   "fieldname": "test_scheduling_tab",
+   "fieldtype": "Tab Break",
+   "label": "Test Scheduling"
+  },
+  {
+   "description": "The departments and designations due for each annual test. A Clinic Test Schedule loads a group's filters from here, and the statutory run schedules every enabled group. Leave Department or Designation empty on a row to match any.",
+   "fieldname": "test_groups",
+   "fieldtype": "Table",
+   "label": "Test Groups",
+   "options": "Clinic Test Group"
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-08-14 14:10:00.000000",
+ "modified": "2026-09-26 15:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Cova Clinic Settings",

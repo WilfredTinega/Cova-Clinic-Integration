@@ -185,7 +185,15 @@ before_uninstall = "cova_clinic_integration.setup.before_uninstall"
 doc_events = {
 	"Job Offer": {
 		"validate": "cova_clinic_integration.setup.job_offer_validate",
-	}
+	},
+	# Gate Pass is upande_ta's; on a site without it this hook simply never fires.
+	"Gate Pass": {
+		"validate": "cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket.gate_pass_validate",
+		"after_insert": "cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket.gate_pass_after_insert",
+		"on_submit": "cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket.ticket_from_gate_pass",
+		"on_cancel": "cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket.gate_pass_released",
+		"on_trash": "cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket.gate_pass_released",
+	},
 }
 
 # Publishes the configured clinic company to the client (frappe.boot).
@@ -193,6 +201,12 @@ extend_bootinfo = ["cova_clinic_integration.setup.extend_bootinfo"]
 
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+	"daily": [
+		"cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket.expire_tickets",
+	],
+}
 
 # scheduler_events = {
 # 	"all": [

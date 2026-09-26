@@ -168,8 +168,7 @@ function cova_post_request(frm) {
         } else {
             frappe.show_alert({ message: __('Sent to Cova'), indicator: 'green' });
         }
-        // Brings back `received_by_cova` and `cova_member_id`, both written
-        // server-side from Cova's reply.
+        // Brings back `received_by_cova`, written server-side from Cova's reply.
         frm.reload_doc();
         console.log('Cova test request response:', data);
     })

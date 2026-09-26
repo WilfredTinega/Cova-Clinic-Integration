@@ -20,6 +20,13 @@ import frappe
 from frappe import _
 from frappe.integrations.utils import make_post_request
 
+from cova_clinic_integration.cova_clinic_integration.doctype.cova_clinic_settings.cova_clinic_settings import (
+	DASHBOARD_SECTIONS,
+	DEFAULT_TEST_GROUPS,
+	get_clinic_company,
+	get_dashboard_viewers,
+	get_test_groups,
+)
 from cova_clinic_integration.cova_clinic_integration.doctype.test_package.test_package import (
 	cova_package_code,
 )
@@ -51,15 +58,42 @@ def health_report_roles(user: str | None = None) -> list[str]:
 	return sorted(set(held))
 
 
-def has_health_report_access(user: str | None = None) -> bool:
-	"""True when the user holds any role in the HR family."""
-	return bool(health_report_roles(user))
+def allowed_dashboard_sections(user: str | None = None) -> list[str]:
+	"""Which Clinic Analytics sections this user may open — they carry
+	employees' medical data.
+
+	Once Cova Clinic Settings lists anyone under Dashboard Access, that list is
+	the whole rule: a listed user sees exactly the sections ticked on their row,
+	Administrator sees all, and nobody else sees any — whatever HR role they
+	hold. No roles or permissions are involved. While the list is empty the
+	HR-family rule applies to every section, so a site is not locked out of its
+	dashboards before anyone is listed."""
+	user = user or frappe.session.user
+	if user == "Guest":
+		return []
+	if user == "Administrator":
+		return list(DASHBOARD_SECTIONS)
+	viewers = get_dashboard_viewers()
+	if viewers:
+		ticked = viewers.get(user, set())
+		return [s for s in DASHBOARD_SECTIONS if s in ticked]
+	return list(DASHBOARD_SECTIONS) if health_report_roles(user) else []
 
 
-def assert_health_report_access() -> None:
-	if not has_health_report_access():
+def has_health_report_access(user: str | None = None, section: str | None = None) -> bool:
+	"""True when the user may open ``section`` — or, with no section given,
+	at least one section of the dashboard."""
+	sections = allowed_dashboard_sections(user)
+	return section in sections if section else bool(sections)
+
+
+def assert_health_report_access(*sections: str) -> None:
+	"""Refuse unless the user may open one of ``sections`` (any section when
+	none is named)."""
+	allowed = allowed_dashboard_sections()
+	if not (any(s in allowed for s in sections) if sections else allowed):
 		frappe.throw(
-			_("You are not permitted to view the Health Report."),
+			_("You are not permitted to view this part of the Clinic dashboard."),
 			frappe.PermissionError,
 		)
 
@@ -345,9 +379,7 @@ def employee_from_payroll(payroll_number) -> str | None:
 def get_cova_config():
 	base_url = frappe.db.get_single_value("Cova Clinic Settings", "base_url")
 	register_endpoint = frappe.db.get_single_value("Cova Clinic Settings", "register_endpoint")
-	deactivation_endpoint = frappe.db.get_single_value(
-		"Cova Clinic Settings", "deactivation_endpoint"
-	)
+	deactivation_endpoint = frappe.db.get_single_value("Cova Clinic Settings", "deactivation_endpoint")
 	return base_url, register_endpoint, deactivation_endpoint
 
 
@@ -372,7 +404,13 @@ def register_one(base_url, register_endpoint, headers, emp):
 		# future sync_members deactivation sweep, which filters on cova_deactivated=0.
 		frappe.db.set_value("Employee", emp.name, "cova_deactivated", 0)
 	cm_name = create_or_update_cova_member(
-		"Active", emp.name, "", emp.employee_name, employee_payroll_id(emp), emp.cell_number or "", emp.gender or "",
+		"Active",
+		emp.name,
+		"",
+		emp.employee_name,
+		employee_payroll_id(emp),
+		emp.cell_number or "",
+		emp.gender or "",
 		activate=not result.get("error"),
 	)
 	save_cova_response(cm_name, result)
@@ -398,14 +436,14 @@ def deactivate_one(base_url, deactivation_endpoint, headers, emp):
 def mark_test_request_sent(request_name, result):
 	"""Record on the request what COVA's reply to a submission means.
 
-	Two things are read off the same reply:
+	``received_by_cova`` is the only proof on the document that the request
+	reached the clinic. It is set on a success and **never cleared**: a re-send
+	that fails does not un-deliver the copy COVA already accepted, and clearing
+	it would send someone chasing a request that is in fact in.
 
-	* ``received_by_cova`` — the only proof on the document that the request
-	  reached the clinic. It is set on a success and **never cleared**: a
-	  re-send that fails does not un-deliver the copy COVA already accepted,
-	  and clearing it would send someone chasing a request that is in fact in.
-	* ``cova_member_id`` — filled only while empty, because a value already
-	  there came from an earlier reply and is what the request was matched on.
+	The member COVA accepted it for is not kept on the request — the request's
+	``cova_member`` link already names it. The reply's ``covaMemberId`` only
+	fills that Cova Members record while it has none.
 
 	Written with db.set_value rather than a save: this runs inside the API call,
 	the fields are read-only to users, and a save here would re-run validate on a
@@ -414,15 +452,80 @@ def mark_test_request_sent(request_name, result):
 	if not request_name or not isinstance(result, dict) or result.get("error"):
 		return
 
-	frappe.db.set_value(
-		"Clinic Test Request", request_name, "received_by_cova", 1, update_modified=False
-	)
+	frappe.db.set_value("Clinic Test Request", request_name, "received_by_cova", 1, update_modified=False)
 
 	member_id = cova_member_id_of(result)
-	if member_id and not frappe.db.get_value("Clinic Test Request", request_name, "cova_member_id"):
-		frappe.db.set_value(
-			"Clinic Test Request", request_name, "cova_member_id", member_id, update_modified=False
-		)
+	member = frappe.db.get_value("Clinic Test Request", request_name, "cova_member")
+	if member_id and member and not frappe.db.get_value("Cova Members", member, "cova_member_id"):
+		frappe.db.set_value("Cova Members", member, "cova_member_id", member_id, update_modified=False)
+
+
+def send_test_request(doc, action="submit_test_request"):
+	"""Send one Clinic Test Request to COVA and record the outcome on it.
+
+	Shared by the desk's *Send to Clinic* action and the Clinic Test Schedule.
+	Returns COVA's result; a request with nothing to identify its member is not
+	sent at all and comes back as ``{"error": ..., "refused": True}``.
+	"""
+	base_url = frappe.db.get_single_value("Cova Clinic Settings", "base_url")
+	test_request_endpoint = frappe.db.get_single_value("Cova Clinic Settings", "test_request_endpoint")
+	headers = build_headers()
+
+	if doc.member_type == "Active":
+		# `payroll_number` is filled on validate, so a request that predates
+		# that (or one imported straight into the table) still has it empty —
+		# and COVA answers `memberIdentifier: ""` with a refusal. Fall back to
+		# the same identifier the API route sends, rather than sending blank.
+		member_identifier = doc.payroll_number
+		if not member_identifier and doc.employee:
+			member_identifier = employee_payroll_id(frappe.get_doc("Employee", doc.employee))
+	else:
+		member_identifier = doc.get("nationa_id") or ""
+
+	if not member_identifier:
+		return {
+			"error": "No member identifier on %s: an Active request needs an Employee, "
+			"a Pre Employment request needs a National ID." % doc.name,
+			"refused": True,
+		}
+
+	payload = {
+		"requestId": doc.name,
+		"memberIdentifier": member_identifier,
+		"memberType": doc.member_type.replace(" ", ""),
+		"testPackage": cova_package_code(doc.test_package),
+		"scheduledWindow": {
+			"from": str(doc.scheduled_from) if doc.get("scheduled_from") else "",
+			"to": str(doc.scheduled_to) if doc.get("scheduled_to") else "",
+		},
+		"notes": doc.get("notes") or "",
+	}
+
+	if doc.member_type == "Pre Employment":
+		# `full_name` is not a field on the request — the pre-employment route
+		# only ever set it in memory before insert. Reading it as an attribute
+		# off a reloaded doc raises AttributeError, which is why re-sending a
+		# candidate's request used to 500; the name lives on the Cova Member.
+		full_name = doc.get("full_name") or ""
+		if not full_name and doc.get("cova_member"):
+			full_name = frappe.db.get_value("Cova Members", doc.cova_member, "full_name") or ""
+
+		payload["candidateBiodata"] = {
+			"fullName": full_name,
+			"nationalId": doc.get("nationa_id") or "",
+			"dateOfBirth": str(doc.date_of_birth) if doc.get("date_of_birth") else "",
+			"gender": doc.gender or "",
+			"phone": normalize_phone(doc.phone_number),
+		}
+
+	result = cova_post(
+		base_url + test_request_endpoint,
+		headers,
+		payload,
+		trace=("Clinic Test Request", doc.name, action),
+	)
+	mark_test_request_sent(doc.name, result)
+	return result
 
 
 def _test_request_error(data, message):
@@ -524,12 +627,24 @@ def cova_clinic_api():
 			# Create/refresh the Cova Member and store COVA's registration response on it.
 			if member_type == "Active":
 				cm_name = create_or_update_cova_member(
-					"Active", employee, "", emp.employee_name, employee_payroll_id(emp), emp.cell_number or "", emp.gender or "",
+					"Active",
+					employee,
+					"",
+					emp.employee_name,
+					employee_payroll_id(emp),
+					emp.cell_number or "",
+					emp.gender or "",
 					activate=not result.get("error"),
 				)
 			else:
 				cm_name = create_or_update_cova_member(
-					"Pre Employment", "", data.get("nationa_id") or "", data.get("full_name") or "", "", data.get("phone_number") or "", data.get("gender") or "",
+					"Pre Employment",
+					"",
+					data.get("nationa_id") or "",
+					data.get("full_name") or "",
+					"",
+					data.get("phone_number") or "",
+					data.get("gender") or "",
 					activate=not result.get("error"),
 				)
 			save_cova_response(cm_name, result)
@@ -639,7 +754,11 @@ def cova_clinic_api():
 
 		to_deactivate = frappe.db.get_all(
 			"Employee",
-			filters={"status": ["!=", "Active"], "cova_member_id": ["not in", ["", None]], "cova_deactivated": 0},
+			filters={
+				"status": ["!=", "Active"],
+				"cova_member_id": ["not in", ["", None]],
+				"cova_deactivated": 0,
+			},
 			pluck="name",
 		)
 
@@ -671,10 +790,6 @@ def cova_clinic_api():
 
 	# ─── 4. SUBMIT TEST REQUEST ───────────────────────────────────────
 	elif action == "submit_test_request":
-		base_url = frappe.db.get_single_value("Cova Clinic Settings", "base_url")
-		test_request_endpoint = frappe.db.get_single_value("Cova Clinic Settings", "test_request_endpoint")
-		headers = build_headers()
-
 		request_name = data.get("request_name")
 		doc = frappe.get_doc("Clinic Test Request", request_name) if request_name else None
 
@@ -683,61 +798,9 @@ def cova_clinic_api():
 			# a raised DoesNotExistError would reach them as an HTML 404 page.
 			return _test_request_error(data, "request_name is required")
 
-		if doc.member_type == "Active":
-			# `payroll_number` is filled on validate, so a request that predates
-			# that (or one imported straight into the table) still has it empty —
-			# and COVA answers `memberIdentifier: ""` with a refusal. Fall back to
-			# the same identifier the API route sends, rather than sending blank.
-			member_identifier = doc.payroll_number
-			if not member_identifier and doc.employee:
-				member_identifier = employee_payroll_id(frappe.get_doc("Employee", doc.employee))
-		else:
-			member_identifier = doc.get("nationa_id") or ""
-
-		if not member_identifier:
-			return _test_request_error(
-				data,
-				"No member identifier on %s: an Active request needs an Employee, "
-				"a Pre Employment request needs a National ID." % doc.name,
-			)
-
-		payload = {
-			"requestId": doc.name,
-			"memberIdentifier": member_identifier,
-			"memberType": doc.member_type.replace(" ", ""),
-			"testPackage": cova_package_code(doc.test_package),
-			"scheduledWindow": {
-				"from": str(doc.scheduled_from) if doc.get("scheduled_from") else "",
-				"to": str(doc.scheduled_to) if doc.get("scheduled_to") else "",
-			},
-			"notes": doc.get("notes") or "",
-		}
-
-		if doc.member_type == "Pre Employment":
-			# `full_name` is not a field on the request — the pre-employment route
-			# only ever set it in memory before insert. Reading it as an attribute
-			# off a reloaded doc raises AttributeError, which is why re-sending a
-			# candidate's request used to 500; the name lives on the Cova Member.
-			full_name = doc.get("full_name") or ""
-			if not full_name and doc.get("cova_member"):
-				full_name = frappe.db.get_value("Cova Members", doc.cova_member, "full_name") or ""
-
-			payload["candidateBiodata"] = {
-				"fullName": full_name,
-				"nationalId": doc.get("nationa_id") or "",
-				"dateOfBirth": str(doc.date_of_birth) if doc.get("date_of_birth") else "",
-				"gender": doc.gender or "",
-				"phone": normalize_phone(doc.phone_number),
-			}
-
-		result = cova_post(
-			base_url + test_request_endpoint,
-			headers,
-			payload,
-			trace=("Clinic Test Request", doc.name, "submit_test_request"),
-		)
-
-		mark_test_request_sent(doc.name, result)
+		result = send_test_request(doc)
+		if result.get("refused"):
+			return _test_request_error(data, result["error"])
 
 		# Status stays Pending until the test result webhook comes back from Cova
 		resp = result
@@ -829,7 +892,13 @@ def cova_clinic_api():
 			member_id = cova_member_id_of(register_result)
 			registered = bool(member_id) or not register_result.get("error")
 			cm_name = create_or_update_cova_member(
-				"Pre Employment", "", national_id, full_name, "", phone, gender,
+				"Pre Employment",
+				"",
+				national_id,
+				full_name,
+				"",
+				phone,
+				gender,
 				activate=registered,
 			)
 			save_cova_response(cm_name, register_result)
@@ -899,11 +968,14 @@ def cova_clinic_api():
 
 			total = 0
 			for item in line_items:
-				doc.append("visit_line_item", {
-					"purpose": item.get("type"),
-					"cost": item.get("amount") or 0,
-					"notes": item.get("notes") or "",
-				})
+				doc.append(
+					"visit_line_item",
+					{
+						"purpose": item.get("type"),
+						"cost": item.get("amount") or 0,
+						"notes": item.get("notes") or "",
+					},
+				)
 				total = total + (item.get("amount") or 0)
 
 			doc.total_cost = total
@@ -947,7 +1019,10 @@ def cova_clinic_api():
 			mc_name = frappe.db.get_value("Medical Case", {"cases": test_package}, "name")
 
 			latest_visit = frappe.db.get_value(
-				"Clinic Visit Cost", {"payroll_number": req.payroll_number}, "name", order_by="visit_date desc"
+				"Clinic Visit Cost",
+				{"payroll_number": req.payroll_number},
+				"name",
+				order_by="visit_date desc",
 			)
 
 			result_doc = frappe.new_doc("Clinic Test Result")
@@ -1059,23 +1134,23 @@ def cova_clinic_api():
 
 	# ─── 8. RUN STATUTORY TESTS ───────────────────────────────────────
 	elif action == "run_statutory_tests":
-		cholinesterase_designations = [
-			"Sprayer", "Spray Pump Operator", "Spray Applicator",
-			"Spray Supervisor", "Crop Protection Section Head", "Scouter",
-		]
-		food_handler_designations = [
-			"Chef", "Cook / Cleaner", "Directors Cook / Cleaner",
-			"Hospitality", "Cleaner/Feeder", "Feeder",
-			"Milker", "Dairy Assistant", "Cold Room Attendant",
-		]
+		# Who is due comes from Cova Clinic Settings → Test Scheduling; the lists
+		# that used to live here are only the fallback for a site that has not
+		# set any groups up (and are what migrate seeds that table with).
+		groups = get_test_groups()
+		if not groups:
+			groups = {
+				name: {
+					"test_package": spec["test_package"],
+					"departments": [],
+					"designations": spec["designations"],
+					"employees_per_designation": 0,
+				}
+				for name, spec in DEFAULT_TEST_GROUPS.items()
+			}
 
-		COMPANY = "Karen Roses"
-		PICK_COUNT = int(data.get("pick_count") or 10)
-
-		test_map = [
-			{"package": "Annual Medical", "designations": cholinesterase_designations, "label": "Cholinesterase"},
-			{"package": "Annual Medical", "designations": food_handler_designations, "label": "Food Handler"},
-		]
+		COMPANY = get_clinic_company() or "Karen Roses"
+		requested_count = int(data.get("pick_count") or 0)
 
 		base_url = frappe.db.get_single_value("Cova Clinic Settings", "base_url")
 		test_request_endpoint = frappe.db.get_single_value("Cova Clinic Settings", "test_request_endpoint")
@@ -1083,36 +1158,44 @@ def cova_clinic_api():
 		current_year = frappe.utils.nowdate().split("-")[0]
 		today = frappe.utils.nowdate()
 		window_end = str(frappe.utils.add_days(today, 15))
+		year_start = current_year + "-01-01"
 
 		results = []
 
-		for mapping in test_map:
-			package = mapping["package"]
-			desig_list = mapping["designations"]
-			if not desig_list:
-				continue
-
-			year_start = current_year + "-01-01"
+		for group_name, group in groups.items():
+			package = group["test_package"]
+			departments = group["departments"]
+			# A group keyed on departments alone still runs, once, over all of them.
+			desig_list = group["designations"] or [None]
+			PICK_COUNT = requested_count or group["employees_per_designation"] or 10
 
 			# Pick PICK_COUNT random employees PER DESIGNATION (not per package)
 			for desig in desig_list:
 				query = (
-					"SELECT e.name, e.employee_number, e.employee_name, e.designation "
+					"SELECT e.name, e.employee_number, e.employee_name, e.designation, e.department "
 					"FROM `tabEmployee` e "
-					"WHERE e.company = %s "
+					"WHERE e.company = %(company)s "
 					"AND e.status = 'Active' "
-					"AND e.designation = %s "
-					"AND e.name NOT IN ("
+					+ ("AND e.designation = %(designation)s " if desig else "")
+					+ ("AND e.department IN %(departments)s " if departments else "")
+					+ "AND e.name NOT IN ("
 					"  SELECT tr.employee FROM `tabClinic Test Request` tr "
-					"  WHERE tr.test_package = %s "
-					"  AND tr.scheduled_from >= %s "
+					"  WHERE tr.test_package = %(package)s "
+					"  AND tr.scheduled_from >= %(year_start)s "
 					"  AND tr.employee IS NOT NULL "
 					"  AND tr.employee != ''"
 					") "
 					"ORDER BY RAND() "
-					"LIMIT %s"
+					"LIMIT %(limit)s"
 				)
-				params = (COMPANY, desig, package, year_start, PICK_COUNT)
+				params = {
+					"company": COMPANY,
+					"designation": desig,
+					"departments": tuple(departments),
+					"package": package,
+					"year_start": year_start,
+					"limit": PICK_COUNT,
+				}
 				candidates = frappe.db.sql(query, params, as_dict=True)
 
 				created = 0
@@ -1125,6 +1208,9 @@ def cova_clinic_api():
 					req_doc.member_type = "Active"
 					req_doc.employee = emp.get("name")
 					req_doc.payroll_number = employee_payroll_id(emp)
+					req_doc.department = emp.get("department")
+					req_doc.designation = emp.get("designation")
+					req_doc.test_group = group_name
 					req_doc.status = "Pending"
 					req_doc.test_package = package
 					req_doc.scheduled_from = today
@@ -1134,41 +1220,38 @@ def cova_clinic_api():
 					created = created + 1
 
 					if base_url and test_request_endpoint:
-						payload = {
-							"requestId": req_doc.name,
-							"memberIdentifier": employee_payroll_id(emp),
-							"memberType": "Active",
-							"testPackage": cova_package_code(package),
-							"scheduledWindow": {"from": today, "to": window_end},
-							"notes": req_doc.notes,
-						}
-						# cova_post never raises, so the outcome has to be read
-						# off the result rather than inferred from "no exception".
-						send_result = cova_post(
-							base_url + test_request_endpoint,
-							headers,
-							payload,
-							trace=("Clinic Test Request", req_doc.name, "run_statutory_tests"),
-						)
-						mark_test_request_sent(req_doc.name, send_result)
+						# send_test_request never raises, so the outcome has to be
+						# read off the result rather than inferred from "no exception".
+						send_result = send_test_request(req_doc, action="run_statutory_tests")
 						if send_result.get("error"):
 							failed = failed + 1
 							send_failures.append(
-								{"employee": emp.get("name"), "request": req_doc.name, "reason": send_result["error"]}
+								{
+									"employee": emp.get("name"),
+									"request": req_doc.name,
+									"reason": send_result["error"],
+								}
 							)
 						else:
 							sent = sent + 1
 
-				results.append({
-					"package": package,
-					"designation": desig,
-					"eligible": len(candidates),
-					"created": created,
-					"sent": sent,
-					"failed": failed,
-					"failures": send_failures[:20],
-					"employees": [{"name": e.get("name"), "employee_name": e.get("employee_name")} for e in candidates],
-				})
+				results.append(
+					{
+						"group": group_name,
+						"package": package,
+						"designation": desig,
+						"departments": departments,
+						"eligible": len(candidates),
+						"created": created,
+						"sent": sent,
+						"failed": failed,
+						"failures": send_failures[:20],
+						"employees": [
+							{"name": e.get("name"), "employee_name": e.get("employee_name")}
+							for e in candidates
+						],
+					}
+				)
 
 		resp = {"status": "statutory tests complete", "results": results}
 
@@ -1240,9 +1323,7 @@ def _disease_where(data):
 	return where_clause, filters
 
 
-_DISEASE_FROM = (
-	"FROM `tabHealth Monthly Report` hmr INNER JOIN `tabHealth Report` hr ON hr.parent = hmr.name"
-)
+_DISEASE_FROM = "FROM `tabHealth Monthly Report` hmr INNER JOIN `tabHealth Report` hr ON hr.parent = hmr.name"
 
 
 @frappe.whitelist()
@@ -1253,18 +1334,21 @@ def disease_report_detail():
 	condition in one monthly report), ``conditions`` one row per condition,
 	``average`` and ``months`` one row per monthly report. Filters are applied
 	exactly as the tiles compute them."""
-	assert_health_report_access()
+	assert_health_report_access("health")
 	data = frappe.request.get_json() or {}
 	kind = (data.get("kind") or "total").strip()
 	where, params = _disease_where(data)
-	month_sort = "FIELD(UPPER(hmr.month),'JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC')"
+	month_sort = (
+		"FIELD(UPPER(hmr.month),'JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC')"
+	)
 
 	if kind == "conditions_by_month":
 		# One row per condition per month, for a line per month in the trend.
 		rows = frappe.db.sql(
 			"SELECT COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, "
 			"UPPER(hmr.month) AS month, SUM(hr.case_count) AS total "
-			+ _DISEASE_FROM + where
+			+ _DISEASE_FROM
+			+ where
 			+ " GROUP BY hr.medical_case, UPPER(hmr.month) ORDER BY total DESC LIMIT 2000",
 			params,
 			as_dict=True,
@@ -1275,7 +1359,8 @@ def disease_report_detail():
 		rows = frappe.db.sql(
 			"SELECT COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, "
 			"SUM(hr.case_count) AS total, COUNT(DISTINCT hmr.name) AS reports "
-			+ _DISEASE_FROM + where
+			+ _DISEASE_FROM
+			+ where
 			+ " GROUP BY hr.medical_case ORDER BY total DESC, medical_case ASC LIMIT 500",
 			params,
 			as_dict=True,
@@ -1289,8 +1374,11 @@ def disease_report_detail():
 		rows = frappe.db.sql(
 			"SELECT hmr.name, UPPER(hmr.month) AS month, hmr.posting_date, "
 			"SUM(hr.case_count) AS total, COUNT(DISTINCT hr.medical_case) AS conditions "
-			+ _DISEASE_FROM + where
-			+ " GROUP BY hmr.name ORDER BY hmr.posting_date DESC, " + month_sort + " DESC LIMIT 500",
+			+ _DISEASE_FROM
+			+ where
+			+ " GROUP BY hmr.name ORDER BY hmr.posting_date DESC, "
+			+ month_sort
+			+ " DESC LIMIT 500",
 			params,
 			as_dict=True,
 		)
@@ -1303,8 +1391,11 @@ def disease_report_detail():
 		rows = frappe.db.sql(
 			"SELECT hmr.name, UPPER(hmr.month) AS month, hmr.posting_date, "
 			"COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, hr.case_count AS total "
-			+ _DISEASE_FROM + where
-			+ " ORDER BY hmr.posting_date DESC, " + month_sort + " DESC, hr.case_count DESC LIMIT 500",
+			+ _DISEASE_FROM
+			+ where
+			+ " ORDER BY hmr.posting_date DESC, "
+			+ month_sort
+			+ " DESC, hr.case_count DESC LIMIT 500",
 			params,
 			as_dict=True,
 		)
@@ -1315,7 +1406,9 @@ def disease_report_detail():
 			for r in frappe.db.sql(
 				"SELECT COALESCE(NULLIF(hr.medical_case, ''), 'Unspecified') AS medical_case, "
 				"COUNT(DISTINCT CONCAT(YEAR(hmr.posting_date), '-', UPPER(hmr.month))) AS months "
-				+ _DISEASE_FROM + where + " GROUP BY hr.medical_case",
+				+ _DISEASE_FROM
+				+ where
+				+ " GROUP BY hr.medical_case",
 				params,
 				as_dict=True,
 			)
@@ -1338,7 +1431,7 @@ def clinic_disease_report():
 
 	HR-only — the /health-report portal page gates on the same check, and this
 	guard stops the endpoint being read directly by non-HR sessions."""
-	assert_health_report_access()
+	assert_health_report_access("health")
 
 	data = frappe.request.get_json() or {}
 
@@ -1440,7 +1533,8 @@ def clinic_disease_report():
 
 	# ─── FILTER OPTIONS ───
 	all_years_rows = frappe.db.sql(
-		"SELECT DISTINCT YEAR(posting_date) AS yr FROM `tabHealth Monthly Report` ORDER BY yr DESC", as_dict=True
+		"SELECT DISTINCT YEAR(posting_date) AS yr FROM `tabHealth Monthly Report` ORDER BY yr DESC",
+		as_dict=True,
 	)
 	all_years = [str(r.get("yr")) for r in all_years_rows if r.get("yr")]
 
@@ -1454,7 +1548,8 @@ def clinic_disease_report():
 				all_months.append(m)
 
 	all_dates_rows = frappe.db.sql(
-		"SELECT DISTINCT posting_date FROM `tabHealth Monthly Report` ORDER BY posting_date DESC", as_dict=True
+		"SELECT DISTINCT posting_date FROM `tabHealth Monthly Report` ORDER BY posting_date DESC",
+		as_dict=True,
 	)
 	all_dates = [str(r.get("posting_date")) for r in all_dates_rows if r.get("posting_date")]
 
@@ -1468,7 +1563,9 @@ def clinic_disease_report():
 	yr_where, yr_params = _disease_where({"year": data.get("year"), "medical_case": data.get("medical_case")})
 	series_rows = frappe.db.sql(
 		"SELECT UPPER(hmr.month) AS m, SUM(hr.case_count) AS total, COUNT(DISTINCT hr.medical_case) AS conditions "
-		+ _DISEASE_FROM + yr_where + " GROUP BY UPPER(hmr.month)",
+		+ _DISEASE_FROM
+		+ yr_where
+		+ " GROUP BY UPPER(hmr.month)",
 		yr_params,
 		as_dict=True,
 	)
@@ -1621,8 +1718,9 @@ def registered_employee_options():
 
 	# The field is installed by the after_install / after_migrate hook; guard so
 	# a site part-way through a deploy degrades to the Cova Members check alone.
-	registered = ["EXISTS (SELECT 1 FROM `tabCova Members` cm WHERE cm.employee = e.name "
-				  "AND cm.status = 'Active')"]
+	registered = [
+		"EXISTS (SELECT 1 FROM `tabCova Members` cm WHERE cm.employee = e.name AND cm.status = 'Active')"
+	]
 	if frappe.db.has_column("Employee", "cova_member_id"):
 		registered.insert(0, "COALESCE(e.cova_member_id, '') != ''")
 	clauses.append("(" + " OR ".join(registered) + ")")
@@ -1644,10 +1742,7 @@ def registered_employee_options():
 def _year_clauses(clauses):
 	"""The same filter set with the month and from/to restrictions removed, so a
 	per-month series can run over the whole year the tiles sit in."""
-	return [
-		c for c in clauses
-		if "MONTH(" not in c and "from_date)s" not in c and "to_date)s" not in c
-	]
+	return [c for c in clauses if "MONTH(" not in c and "from_date)s" not in c and "to_date)s" not in c]
 
 
 def _kpi_series(rows, keys, month_key="m"):
@@ -1667,7 +1762,7 @@ def _kpi_series(rows, keys, month_key="m"):
 
 
 def _ratio_series(num, den, digits=1):
-	return [round(n / d, digits) if d else 0 for n, d in zip(num, den)]
+	return [round(n / d, digits) if d else 0 for n, d in zip(num, den, strict=False)]
 
 
 def _month_series(rows):
@@ -1697,7 +1792,7 @@ def clinic_checkin_report():
 	each carries, not which column the employee was written into.
 
 	Both are summarised here so the dashboard can present them separately."""
-	assert_health_report_access()
+	assert_health_report_access("biometric", "sickoff")
 	data, year, month_num = _dashboard_request()
 
 	# ── biometric punches ────────────────────────────────────────────
@@ -1754,6 +1849,8 @@ def clinic_checkin_report():
 		"SUM(CASE WHEN cc.log_type = 'OUT' THEN 0 ELSE 1 END) AS in_punches, "
 		"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches, "
 		"MIN(CASE WHEN cc.log_type = 'OUT' THEN NULL ELSE cc.time END) AS first_in, "
+		"MAX(CASE WHEN cc.log_type = 'OUT' THEN NULL ELSE cc.time END) AS last_in, "
+		"MIN(CASE WHEN cc.log_type = 'OUT' THEN cc.time ELSE NULL END) AS first_out, "
 		"MAX(CASE WHEN cc.log_type = 'OUT' THEN cc.time ELSE NULL END) AS last_out, "
 		"MAX(cc.time) AS last_visit "
 		"FROM `tabClinic Checkin` cc LEFT JOIN `tabEmployee` e ON e.name = cc.employee"
@@ -1763,11 +1860,21 @@ def clinic_checkin_report():
 		bio_params,
 		as_dict=True,
 	)
+	# Time in the clinic: each employee-day runs from its first punch to its
+	# last (see _describe_stay); the period's figure is the sum of those days.
+	stays = _clinic_stays(bio_where, bio_params)
+	timed = [st["minutes"] for st in stays if st["minutes"] is not None]
+	minutes_by_employee = {}
+	for st in stays:
+		if st["minutes"] is not None:
+			minutes_by_employee[st["employee"]] = minutes_by_employee.get(st["employee"], 0) + st["minutes"]
+
 	for r in bio_top:
 		for k in ("visits", "in_punches", "out_punches"):
 			r[k] = int(r.get(k) or 0)
-		for k in ("last_visit", "first_in", "last_out"):
+		for k in ("last_visit", "first_in", "last_in", "first_out", "last_out"):
 			r[k] = str(r[k])[:16] if r.get(k) else ""
+		r["minutes"] = minutes_by_employee.get(r["employee"])
 
 	# ── sick-off records (the ones that raise a Leave Application) ────
 	so_clauses, so_params = _period_clauses("cc.start_date", year, month_num)
@@ -1861,8 +1968,28 @@ def clinic_checkin_report():
 		as_dict=True,
 	)
 	so_series = _kpi_series(so_series_rows, ["records", "employees", "days", "with_leave"])
-	so_series["without_leave"] = [r - w for r, w in zip(so_series["records"], so_series["with_leave"])]
+	so_series["without_leave"] = [r - w for r, w in zip(so_series["records"], so_series["with_leave"], strict=False)]
 	so_series["avg_days"] = _ratio_series(so_series["days"], so_series["records"])
+
+	# ── seen at an external facility (Clinic Checkin.is_external) ─────
+	ext_day = "COALESCE(cc.start_date, DATE(cc.time_in), DATE(cc.creation))"
+	ext_clauses, ext_params = _period_clauses(ext_day, year, month_num)
+	ext_range, ext_range_params = _range_clauses(ext_day, data, prefix="ext_")
+	ext_clauses.extend(ext_range)
+	ext_params.update(ext_range_params)
+	ext_clauses.insert(0, "cc.is_external = 1")
+	facilities = frappe.db.sql(
+		"SELECT cc.facility, COUNT(*) AS visits, COUNT(DISTINCT cc.employee) AS employees, "
+		"SUM(COALESCE(cc.sick_off_given, 0)) AS sick_days "
+		"FROM `tabClinic Checkin` cc"
+		+ _where(ext_clauses)
+		+ " GROUP BY cc.facility ORDER BY visits DESC LIMIT 50",
+		ext_params,
+		as_dict=True,
+	)
+	for r in facilities:
+		for k in ("visits", "employees", "sick_days"):
+			r[k] = int(r.get(k) or 0)
 
 	resp = {
 		"biometric": {
@@ -1874,6 +2001,10 @@ def clinic_checkin_report():
 				"out_punches": int(bio_totals.get("out_punches") or 0),
 				"days": bio_days,
 				"avg_per_day": round((bio_punches * 1.0) / bio_days, 1) if bio_days else 0,
+				"stays": len(stays),
+				"timed_stays": len(timed),
+				"total_minutes": sum(timed),
+				"avg_stay_minutes": round(sum(timed) / len(timed)) if timed else 0,
 			},
 			"by_month": _month_series(bio_by_month),
 			"by_hour": {
@@ -1893,18 +2024,83 @@ def clinic_checkin_report():
 				"without_leave": so_records - so_with_leave,
 				"leave_rate": _pct(so_with_leave, so_records),
 				"avg_days": round((so_days * 1.0) / so_records, 1) if so_records else 0,
+				"external_visits": sum(r["visits"] for r in facilities),
+				"external_sick_days": sum(r["sick_days"] for r in facilities),
 			},
 			"by_month": _month_series(so_by_month),
 			"durations": durations,
 			"top_employees": so_top,
+			"facilities": facilities,
 		},
 		"filter_options": {
 			"years": [str(r.get("yr")) for r in year_rows if r.get("yr")],
 			"months": list(MONTH_LABELS),
 		},
 	}
+	# One endpoint feeds two sections; send only what this viewer is ticked for.
+	allowed = allowed_dashboard_sections()
+	if "biometric" not in allowed:
+		resp.pop("biometric")
+	if "sickoff" not in allowed:
+		resp.pop("sick_off")
 	frappe.response["message"] = resp
 	return resp
+
+
+def _describe_stay(stay):
+	"""Turn one employee-day's punch extremes into a clinic stay.
+
+	The employee arrived at the day's earliest punch and left at its latest,
+	whichever log type each happened to be — so a stay is one of First In →
+	Last Out, First In → Last In, First Out → Last Out or First Out → Last In.
+	On a tie, an IN is taken as the arrival and an OUT as the departure. A day
+	with a single punch has an arrival but no departure, so no time spent."""
+	first_in, last_in = stay.get("first_in"), stay.get("last_in")
+	first_out, last_out = stay.get("first_out"), stay.get("last_out")
+
+	if first_in and (not first_out or first_in <= first_out):
+		arrived, arrived_as = first_in, "First In"
+	else:
+		arrived, arrived_as = first_out, "First Out"
+	if last_out and (not last_in or last_out >= last_in):
+		left, left_as = last_out, "Last Out"
+	else:
+		left, left_as = last_in, "Last In"
+
+	stay["arrived"], stay["arrived_as"] = arrived, arrived_as
+	if int(stay.get("punches") or 0) < 2 or not (arrived and left) or left <= arrived:
+		stay["left"], stay["left_as"], stay["minutes"] = None, "", None
+		stay["interval"] = arrived_as + " only"
+	else:
+		stay["left"], stay["left_as"] = left, left_as
+		stay["minutes"] = int((left - arrived).total_seconds() // 60)
+		stay["interval"] = arrived_as + " \u2192 " + left_as
+	return stay
+
+
+_STAY_NAME = "COALESCE(NULLIF(e.employee_name, ''), NULLIF(cc.full_name, ''), cc.employee)"
+_STAY_IDENT = "COALESCE(NULLIF(cc.employee_payroll_number, ''), NULLIF(cc.payroll_number, ''))"
+
+
+def _clinic_stays(where, params, limit=None):
+	"""One row per employee per day in the clinic, with that day's first and
+	last IN and OUT punch and the time spent between arrival and departure.
+	Anything that is not an OUT counts as an IN, as the hour chart does."""
+	rows = frappe.db.sql(
+		f"SELECT cc.employee, MAX({_STAY_NAME}) AS employee_name, MAX({_STAY_IDENT}) AS payroll_number, "
+		"DATE(cc.time) AS day, COUNT(*) AS punches, "
+		"MIN(CASE WHEN cc.log_type = 'OUT' THEN NULL ELSE cc.time END) AS first_in, "
+		"MAX(CASE WHEN cc.log_type = 'OUT' THEN NULL ELSE cc.time END) AS last_in, "
+		"MIN(CASE WHEN cc.log_type = 'OUT' THEN cc.time ELSE NULL END) AS first_out, "
+		"MAX(CASE WHEN cc.log_type = 'OUT' THEN cc.time ELSE NULL END) AS last_out "
+		"FROM `tabClinic Checkin` cc LEFT JOIN `tabEmployee` e ON e.name = cc.employee"
+		+ where
+		+ " GROUP BY cc.employee, DATE(cc.time) ORDER BY day DESC, employee_name ASC"
+		+ (f" LIMIT {int(limit)}" if limit else ""),
+		params,
+		as_dict=True,
+	)
+	return [_describe_stay(r) for r in rows]
 
 
 def _pair_punches(punches):
@@ -1923,9 +2119,15 @@ def _pair_punches(punches):
 			open_visit = None
 		if (p.get("log_type") or "IN") != "OUT":
 			open_visit = {
-				"name": p["name"], "employee": p["employee"], "employee_name": p.get("employee_name"),
-				"payroll_number": p.get("payroll_number"), "day": day,
-				"time_in": t, "time_out": None, "out_name": None, "minutes": None,
+				"name": p["name"],
+				"employee": p["employee"],
+				"employee_name": p.get("employee_name"),
+				"payroll_number": p.get("payroll_number"),
+				"day": day,
+				"time_in": t,
+				"time_out": None,
+				"out_name": None,
+				"minutes": None,
 			}
 			visits.append(open_visit)
 		elif open_visit is not None and open_visit["time_out"] is None:
@@ -1935,11 +2137,19 @@ def _pair_punches(punches):
 				open_visit["minutes"] = int((t - open_visit["time_in"]).total_seconds() // 60)
 			open_visit = None
 		else:
-			visits.append({
-				"name": p["name"], "employee": p["employee"], "employee_name": p.get("employee_name"),
-				"payroll_number": p.get("payroll_number"), "day": day,
-				"time_in": None, "time_out": t, "out_name": p["name"], "minutes": None,
-			})
+			visits.append(
+				{
+					"name": p["name"],
+					"employee": p["employee"],
+					"employee_name": p.get("employee_name"),
+					"payroll_number": p.get("payroll_number"),
+					"day": day,
+					"time_in": None,
+					"time_out": t,
+					"out_name": p["name"],
+					"minutes": None,
+				}
+			)
 			open_visit = None
 	return visits
 
@@ -1949,10 +2159,11 @@ def clinic_punch_people():
 	"""The punches behind one Clinic Visits (biometric) KPI tile.
 
 	``kind`` picks the tile: ``IN`` / ``OUT`` for one log type, ``employees``
-	for one row per person, ``days`` for one row per visit day, or nothing for
-	every punch in the period. The period is applied exactly as the tiles
+	for one row per person, ``days`` for one row per visit day, ``stays`` for
+	one row per employee per day with its first/last IN and OUT and the time
+	spent in the clinic, or nothing for every punch in the period. The period is applied exactly as the tiles
 	compute it, so the list can never disagree with the number clicked."""
-	assert_health_report_access()
+	assert_health_report_access("biometric")
 	data, year, month_num = _dashboard_request()
 	kind = (data.get("kind") or "").strip()
 
@@ -1971,7 +2182,18 @@ def clinic_punch_people():
 	name = "COALESCE(NULLIF(e.employee_name, ''), NULLIF(cc.full_name, ''), cc.employee)"
 	ident = "COALESCE(NULLIF(cc.employee_payroll_number, ''), NULLIF(cc.payroll_number, ''))"
 	joins = " LEFT JOIN `tabEmployee` e ON e.name = cc.employee"
-	grouped = kind in ("employees", "days")
+	grouped = kind in ("employees", "days", "stays")
+
+	if kind == "stays":
+		rows = _clinic_stays(where, params, limit=500)
+		for r in rows:
+			for k in ("first_in", "last_in", "first_out", "last_out", "arrived", "left"):
+				r[k] = str(r[k])[:16] if r.get(k) else ""
+			r["punches"] = int(r.get("punches") or 0)
+			r["day"] = str(r["day"])
+		out = {"kind": kind, "rows": rows, "grouped": grouped}
+		frappe.response["message"] = out
+		return out
 
 	if kind == "employees":
 		rows = frappe.db.sql(
@@ -1980,7 +2202,9 @@ def clinic_punch_people():
 			"SUM(CASE WHEN cc.log_type = 'IN' THEN 1 ELSE 0 END) AS in_punches, "
 			"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches, "
 			"MIN(cc.time) AS first_seen, MAX(cc.time) AS last_seen "
-			"FROM `tabClinic Checkin` cc" + joins + where
+			"FROM `tabClinic Checkin` cc"
+			+ joins
+			+ where
 			+ " GROUP BY cc.employee ORDER BY punches DESC, employee_name ASC LIMIT 500",
 			params,
 			as_dict=True,
@@ -1990,8 +2214,7 @@ def clinic_punch_people():
 			"SELECT DATE(cc.time) AS day, COUNT(*) AS punches, COUNT(DISTINCT cc.employee) AS employees, "
 			"SUM(CASE WHEN cc.log_type = 'IN' THEN 1 ELSE 0 END) AS in_punches, "
 			"SUM(CASE WHEN cc.log_type = 'OUT' THEN 1 ELSE 0 END) AS out_punches "
-			"FROM `tabClinic Checkin` cc" + where
-			+ " GROUP BY DATE(cc.time) ORDER BY day DESC LIMIT 500",
+			"FROM `tabClinic Checkin` cc" + where + " GROUP BY DATE(cc.time) ORDER BY day DESC LIMIT 500",
 			params,
 			as_dict=True,
 		)
@@ -1999,8 +2222,7 @@ def clinic_punch_people():
 		punches = frappe.db.sql(
 			f"SELECT cc.name, cc.employee, {name} AS employee_name, {ident} AS payroll_number, "
 			"cc.log_type, cc.time "
-			"FROM `tabClinic Checkin` cc" + joins + where
-			+ " ORDER BY cc.employee, cc.time ASC LIMIT 2000",
+			"FROM `tabClinic Checkin` cc" + joins + where + " ORDER BY cc.employee, cc.time ASC LIMIT 2000",
 			params,
 			as_dict=True,
 		)
@@ -2035,7 +2257,7 @@ def clinic_visit_cost_report():
 	``benefit_*`` on a visit is the balance COVA reported as *remaining* after
 	that visit, so the trend follows the latest visit in each month rather than
 	summing across visits — a sum of balances would be meaningless."""
-	assert_health_report_access()
+	assert_health_report_access("visits")
 	data, year, month_num = _dashboard_request()
 
 	clauses, params = _period_clauses("cv.visit_date", year, month_num)
@@ -2101,7 +2323,7 @@ def clinic_visit_cost_report():
 		"SELECT MONTH(cv.visit_date) AS m, "
 		+ ", ".join(f"COALESCE(cv.{f}, 0) AS {f}" for f, _label in BENEFITS)
 		+ " FROM `tabClinic Visit Cost` cv"
-		+ _where(list(clauses) + ["cv.visit_date IS NOT NULL"])
+		+ _where([*list(clauses), "cv.visit_date IS NOT NULL"])
 		+ " ORDER BY cv.visit_date ASC, cv.creation ASC",
 		params,
 		as_dict=True,
@@ -2165,7 +2387,7 @@ def clinic_visit_cost_report():
 		"MAX(cv.payroll_number) AS payroll_number, COUNT(*) AS visits, "
 		"COALESCE(SUM(cv.total_cost), 0) AS cost, MAX(cv.visit_date) AS last_visit "
 		"FROM `tabClinic Visit Cost` cv LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
-		+ _where(list(clauses) + ["cv.visit_date IS NOT NULL", _NO_CHECKIN_CLAUSE])
+		+ _where([*list(clauses), "cv.visit_date IS NOT NULL", _NO_CHECKIN_CLAUSE])
 		+ " GROUP BY cv.employee, e.employee_name, cv.full_name, cv.candidate_name"
 		" ORDER BY cost DESC LIMIT 100",
 		params,
@@ -2182,7 +2404,7 @@ def clinic_visit_cost_report():
 		"COALESCE(e.employee_name, cv.full_name, cv.candidate_name, cv.employee) AS employee_name, "
 		"MONTH(cv.visit_date) AS m, COALESCE(SUM(cv.total_cost), 0) AS cost "
 		"FROM `tabClinic Visit Cost` cv LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
-		+ _where(list(clauses) + ["cv.visit_date IS NOT NULL"])
+		+ _where([*list(clauses), "cv.visit_date IS NOT NULL"])
 		+ " GROUP BY cv.employee, e.employee_name, cv.full_name, cv.candidate_name, MONTH(cv.visit_date)",
 		params,
 		as_dict=True,
@@ -2263,7 +2485,7 @@ def clinic_visit_cost_report():
 def employee_visit_breakdown():
 	"""Individual visit records for an employee, from Clinic Visit Cost.
 	Used by the modal breakdown view on the health report dashboard."""
-	assert_health_report_access()
+	assert_health_report_access("visits")
 	employee = frappe.form_dict.get("employee")
 	if not employee:
 		frappe.throw("employee is required")
@@ -2344,7 +2566,7 @@ def clinic_test_request_report():
 	"""Clinic Test Request pipeline: what was asked of COVA and what came back.
 	Scheduling dates drive the period, so a request shows up in the month it was
 	scheduled for rather than the month the row happened to be created."""
-	assert_health_report_access()
+	assert_health_report_access("requests")
 	data, year, month_num = _dashboard_request()
 
 	clauses, params = _period_clauses("tr.scheduled_from", year, month_num)
@@ -2406,7 +2628,7 @@ def clinic_test_request_report():
 		as_dict=True,
 	)
 
-	overdue_clauses = list(clauses) + ["tr.status = 'Pending'", "tr.scheduled_to < CURDATE()"]
+	overdue_clauses = [*list(clauses), "tr.status = 'Pending'", "tr.scheduled_to < CURDATE()"]
 	overdue_rows = frappe.db.sql(
 		# Clinic Test Request has no full_name column, so pre-employment rows fall
 		# back to the national ID they were registered with.
@@ -2477,7 +2699,7 @@ def purpose_spend_people():
 	"""Who the spend on one purpose went to: one row per employee with their
 	line items, visits and total cost for that purpose, under the same period
 	and employee filters as the Spend by Purpose table."""
-	assert_health_report_access()
+	assert_health_report_access("visits")
 	data, year, month_num = _dashboard_request()
 
 	clauses, params = _period_clauses("cv.visit_date", year, month_num)
@@ -2530,7 +2752,7 @@ def sick_off_people():
 	leave tiles, ``employees`` for one row per person, or nothing for every
 	record in the period. The period is the sick-off start date, exactly as
 	the tiles compute it."""
-	assert_health_report_access()
+	assert_health_report_access("sickoff")
 	data, year, month_num = _dashboard_request()
 	kind = (data.get("kind") or "").strip()
 
@@ -2557,7 +2779,9 @@ def sick_off_people():
 			"COUNT(*) AS episodes, SUM(DATEDIFF(cc.end_date, cc.start_date) + 1) AS days, "
 			"SUM(CASE WHEN cc.leave_application IS NOT NULL AND cc.leave_application != '' THEN 1 ELSE 0 END) AS with_leave, "
 			"MIN(cc.start_date) AS first_off, MAX(cc.end_date) AS last_off "
-			"FROM `tabClinic Checkin` cc" + joins + where
+			"FROM `tabClinic Checkin` cc"
+			+ joins
+			+ where
 			+ " GROUP BY cc.employee ORDER BY days DESC, employee_name ASC LIMIT 500",
 			params,
 			as_dict=True,
@@ -2567,7 +2791,9 @@ def sick_off_people():
 			f"SELECT cc.name, cc.employee, {name} AS employee_name, {ident} AS payroll_number, "
 			"cc.start_date, cc.end_date, DATEDIFF(cc.end_date, cc.start_date) + 1 AS days, "
 			"cc.reason, cc.leave_application "
-			"FROM `tabClinic Checkin` cc" + joins + where
+			"FROM `tabClinic Checkin` cc"
+			+ joins
+			+ where
 			+ " ORDER BY cc.start_date DESC, cc.name DESC LIMIT 500",
 			params,
 			as_dict=True,
@@ -2599,7 +2825,7 @@ def test_request_people():
 	``status`` / ``test_package`` / ``member_type`` filter narrows further, so a
 	cell of the package grid passes its package and status. The period is the
 	scheduled-from date, exactly as the report computes it."""
-	assert_health_report_access()
+	assert_health_report_access("requests")
 	data, year, month_num = _dashboard_request()
 
 	clauses, params = _period_clauses("tr.scheduled_from", year, month_num)
@@ -2662,7 +2888,7 @@ def test_result_people():
 	distinct-employee count, or nothing at all for every result in the period.
 	The period and view filters are applied exactly as the tiles compute them,
 	so the list can never disagree with the number that was clicked."""
-	assert_health_report_access()
+	assert_health_report_access("results")
 	data, year, month_num = _dashboard_request()
 
 	clauses, params = _period_clauses("ctr.creation", year, month_num)
@@ -2750,8 +2976,9 @@ def test_result_people():
 			f"SELECT ctr.employee AS employee, MAX({name}) AS employee_name, "
 			"MAX(ctr.payroll_number) AS payroll_number, COUNT(*) AS results, "
 			"MAX(ctr.creation) AS received "
-			"FROM `tabClinic Test Result` ctr" + joins
-			+ _where(list(clauses) + ["ctr.employee IS NOT NULL", "ctr.employee != ''"])
+			"FROM `tabClinic Test Result` ctr"
+			+ joins
+			+ _where([*list(clauses), "ctr.employee IS NOT NULL", "ctr.employee != ''"])
 			+ " GROUP BY ctr.employee ORDER BY employee_name ASC LIMIT 500",
 			params,
 			as_dict=True,
@@ -2770,9 +2997,7 @@ def test_result_people():
 			f"SELECT ctr.name, ctr.employee AS employee, {name} AS employee_name, "
 			f"{ident} AS payroll_number, ctr.member_type, "
 			f"ctr.clinical_outcome, ctr.test_package, {grade} AS risk_grade, ctr.creation AS received "
-			"FROM `tabClinic Test Result` ctr" + joins
-			+ where
-			+ " ORDER BY ctr.creation DESC LIMIT 500",
+			"FROM `tabClinic Test Result` ctr" + joins + where + " ORDER BY ctr.creation DESC LIMIT 500",
 			params,
 			as_dict=True,
 		)
@@ -2794,7 +3019,7 @@ def clinic_test_result_report():
 	"""Clinic Test Result outcomes plus the per-condition risk grades that COVA
 	returns on the child ``Test Result`` table. Results have no posting date of
 	their own, so the period runs off ``creation``."""
-	assert_health_report_access()
+	assert_health_report_access("results")
 	data, year, month_num = _dashboard_request()
 
 	clauses, params = _period_clauses("ctr.creation", year, month_num)
@@ -2945,6 +3170,10 @@ def clinic_test_result_report():
 # `Clinic Data`; both carry the same employee / start_date / end_date / reason /
 # time_in / time_out sick-off fields). Inserting a record triggers the Clinic
 # Checkin controller's dedup (before_insert) and sick-leave creation (after_insert).
+#
+# An employee seen outside the clinic is posted with `is_external` plus the
+# `facility` that saw them and the `sick_off_given` (days) it gave. Sending a
+# `facility` alone implies `is_external`.
 
 
 @frappe.whitelist()
@@ -2972,7 +3201,8 @@ def get_clinic_data():
 
 			records = frappe.db.sql(
 				"""
-				SELECT employee, start_date, end_date, reason, time_in, time_out
+				SELECT employee, start_date, end_date, reason, time_in, time_out,
+					is_external, facility, sick_off_given
 				FROM `tabClinic Checkin`
 				WHERE DATE(creation) >= %(start_date)s
 				AND DATE(creation) <= %(end_date)s
@@ -2987,6 +3217,8 @@ def get_clinic_data():
 				record["end_date"] = str(record["end_date"])
 				record["time_in"] = str(record["time_in"]) if record.get("time_in") else None
 				record["time_out"] = str(record["time_out"]) if record.get("time_out") else None
+				record["is_external"] = int(record.get("is_external") or 0)
+				record["sick_off_given"] = int(record.get("sick_off_given") or 0)
 
 			frappe.response.pop("docs", None)
 			frappe.response["status"] = "success"
@@ -2996,7 +3228,9 @@ def get_clinic_data():
 
 		except Exception as e:
 			frappe.log_error(title="Clinic Data API GET Error", message=str(e))
-			frappe.response.update({"status": "error", "message": "Failed to fetch records: {0}".format(str(e))})
+			frappe.response.update(
+				{"status": "error", "message": "Failed to fetch records: {0}".format(str(e))}
+			)
 			frappe.response.http_status_code = 500
 
 	# ── POST: create a Clinic Checkin record (no dedup blockage) ──
@@ -3031,6 +3265,20 @@ def get_clinic_data():
 				except Exception as date_error:
 					frappe.throw("Invalid date format: {0}".format(str(date_error)))
 
+			facility = (data.get("facility") or "").strip() or None
+			is_external = 1 if (frappe.utils.cint(data.get("is_external")) or facility) else 0
+			sick_off_given = data.get("sick_off_given")
+			if is_external:
+				if not facility:
+					frappe.throw("Missing required field: 'facility' (required when 'is_external' is set)")
+				if sick_off_given not in (None, ""):
+					try:
+						sick_off_given = int(sick_off_given)
+					except (TypeError, ValueError):
+						frappe.throw("'sick_off_given' must be a whole number of days")
+					if sick_off_given < 0:
+						frappe.throw("'sick_off_given' cannot be negative")
+
 			# Always insert — inserts and saves are allowed without dedup blockage.
 			doc = frappe.get_doc(
 				{
@@ -3041,6 +3289,9 @@ def get_clinic_data():
 					"reason": data.get("reason"),
 					"time_in": data.get("time_in"),
 					"time_out": data.get("time_out"),
+					"is_external": is_external,
+					"facility": facility if is_external else None,
+					"sick_off_given": (sick_off_given or 0) if is_external else 0,
 				}
 			).insert(ignore_permissions=True)
 
@@ -3057,6 +3308,9 @@ def get_clinic_data():
 						"id": doc.name,
 						"employee": doc.employee,
 						"leave_application": doc.leave_application,
+						"is_external": doc.is_external,
+						"facility": doc.facility,
+						"sick_off_given": doc.sick_off_given,
 					},
 				}
 			)
@@ -3064,14 +3318,1034 @@ def get_clinic_data():
 
 		except Exception as e:
 			frappe.log_error(title="Clinic Data API POST Error", message=str(e))
-			frappe.response.update({"status": "error", "message": "Failed to process request: {0}".format(str(e))})
+			frappe.response.update(
+				{"status": "error", "message": "Failed to process request: {0}".format(str(e))}
+			)
 			frappe.response.http_status_code = 500
 
 	else:
 		frappe.response.update(
-			{"status": "error", "message": "Method '{0}' not allowed. Supported methods: GET, POST".format(method)}
+			{
+				"status": "error",
+				"message": "Method '{0}' not allowed. Supported methods: GET, POST".format(method),
+			}
 		)
 		frappe.response.http_status_code = 405
+
+
+# ─── clinic tickets / test scheduling dashboards ────────────────────────────
+
+
+def _option_values(sql):
+	return [r[0] for r in frappe.db.sql(sql) if r[0]]
+
+
+@frappe.whitelist()
+def clinic_overview_report():
+	"""Overview: the headline totals from every other section — cases,
+	tickets, medical gate passes, visits, sick-offs and tests — for one year
+	(and month). Each figure is included only when the viewer may open the
+	section it comes from, so the overview never shows more than they could
+	see section by section."""
+	assert_health_report_access("overview")
+	data, year, month_num = _dashboard_request()
+	year = year or frappe.utils.getdate().year
+	allowed = set(allowed_dashboard_sections())
+
+	def period(field):
+		clauses, params = _period_clauses(field, year, month_num)
+		return _where(clauses), params
+
+	def by_month(sql, field, params):
+		rows = frappe.db.sql(sql + f" GROUP BY MONTH({field})", params, as_dict=True)
+		return _month_series(rows)["values"]
+
+	kpis, series, top_cases = {}, {}, []
+
+	if "health" in allowed:
+		clauses = ["YEAR(hmr.posting_date) = %(year)s"]
+		params = {"year": year}
+		if month_num:
+			clauses.append("UPPER(hmr.month) = %(month)s")
+			params["month"] = MONTH_LABELS[month_num - 1]
+		where = _where(clauses)
+		kpis["cases"] = int(
+			frappe.db.sql("SELECT COALESCE(SUM(hr.case_count), 0) " + _DISEASE_FROM + where, params)[0][0]
+			or 0
+		)
+		top_cases = frappe.db.sql(
+			"SELECT hr.medical_case AS condition_name, SUM(hr.case_count) AS cases "
+			+ _DISEASE_FROM
+			+ where
+			+ " GROUP BY hr.medical_case ORDER BY cases DESC LIMIT 10",
+			params,
+			as_dict=True,
+		)
+		for r in top_cases:
+			r["cases"] = int(r["cases"] or 0)
+		rows = frappe.db.sql(
+			"SELECT MONTH(hmr.posting_date) AS m, SUM(hr.case_count) AS cnt "
+			+ _DISEASE_FROM
+			+ " WHERE YEAR(hmr.posting_date) = %(year)s GROUP BY MONTH(hmr.posting_date)",
+			{"year": year},
+			as_dict=True,
+		)
+		series["cases"] = _month_series(rows)["values"]
+
+	if "tickets" in allowed:
+		where, params = period("ticket_date")
+		t = frappe.db.sql(
+			"SELECT COUNT(*) AS total, SUM(status = 'Visited') AS visited FROM `tabClinic Ticket`" + where,
+			params,
+			as_dict=True,
+		)[0]
+		kpis["tickets"] = int(t.total or 0)
+		kpis["tickets_visited"] = int(t.visited or 0)
+		series["tickets"] = by_month(
+			"SELECT MONTH(ticket_date) AS m, COUNT(*) AS cnt FROM `tabClinic Ticket`"
+			" WHERE YEAR(ticket_date) = %(year)s",
+			"ticket_date",
+			{"year": year},
+		)
+		if frappe.db.exists("DocType", "Gate Pass"):
+			where, params = period("date")
+			kpis["medical_gate_passes"] = int(
+				frappe.db.sql(
+					"SELECT COUNT(*) FROM `tabGate Pass`"
+					+ (where + " AND" if where else " WHERE")
+					+ " pass_type = 'Medical' AND docstatus < 2",
+					params,
+				)[0][0]
+				or 0
+			)
+
+	if "biometric" in allowed:
+		where, params = period("cc.time")
+		kpis["clinic_visits"] = int(
+			frappe.db.sql(
+				"SELECT COUNT(DISTINCT cc.employee, DATE(cc.time)) FROM `tabClinic Checkin` cc"
+				+ (where + " AND " if where else " WHERE ")
+				+ _PUNCH_CLAUSE,
+				params,
+			)[0][0]
+			or 0
+		)
+
+	if "sickoff" in allowed:
+		where, params = period("start_date")
+		s = frappe.db.sql(
+			"SELECT COUNT(*) AS records, SUM(DATEDIFF(end_date, start_date) + 1) AS days FROM `tabClinic Checkin`"
+			+ (where + " AND" if where else " WHERE")
+			+ " start_date IS NOT NULL AND end_date IS NOT NULL",
+			params,
+			as_dict=True,
+		)[0]
+		kpis["sick_offs"] = int(s.records or 0)
+		kpis["sick_days"] = int(s.days or 0)
+
+	if allowed & {"requests", "schedules"}:
+		where, params = period("scheduled_from")
+		r = frappe.db.sql(
+			"SELECT COUNT(*) AS total, SUM(status = 'Pending') AS pending, SUM(status = 'Completed') AS completed "
+			"FROM `tabClinic Test Request`" + where,
+			params,
+			as_dict=True,
+		)[0]
+		kpis["tests"] = int(r.total or 0)
+		kpis["tests_pending"] = int(r.pending or 0)
+		kpis["tests_completed"] = int(r.completed or 0)
+
+	if "accidents" in allowed:
+		where, params = period("accident_date")
+		a = frappe.db.sql(
+			"SELECT COUNT(*) AS total, SUM(lost_time_injury = 1) AS lost_time, COALESCE(SUM(days_lost), 0) AS days_lost "
+			"FROM `tabWork Accident`" + where,
+			params,
+			as_dict=True,
+		)[0]
+		kpis["accidents"] = int(a.total or 0)
+		kpis["accidents_lost_time"] = int(a.lost_time or 0)
+		kpis["accidents_days_lost"] = int(a.days_lost or 0)
+
+	years = sorted(
+		{
+			str(y)
+			for y in _option_values("SELECT DISTINCT YEAR(posting_date) FROM `tabHealth Monthly Report`")
+			+ _option_values("SELECT DISTINCT YEAR(ticket_date) FROM `tabClinic Ticket`")
+			+ _option_values("SELECT DISTINCT YEAR(`time`) FROM `tabClinic Checkin`")
+		}
+		| {str(year)},
+		reverse=True,
+	)
+
+	resp = {
+		"year": str(year),
+		"kpis": kpis,
+		"by_month": {"months": list(MONTH_LABELS), **series},
+		"top_cases": top_cases,
+		"filter_options": {"years": years, "months": list(MONTH_LABELS)},
+	}
+	frappe.response["message"] = resp
+	return resp
+
+
+@frappe.whitelist()
+def clinic_ticket_report():
+	"""Clinic Tickets: who was allowed to go to the clinic, and whether they went."""
+	assert_health_report_access("tickets")
+	data, year, month_num = _dashboard_request()
+
+	clauses, params = _period_clauses("ct.ticket_date", year, month_num)
+	range_clauses, range_params = _range_clauses("ct.ticket_date", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	for key in ("department", "designation", "status"):
+		if data.get(key):
+			clauses.append(f"ct.{key} = %({key})s")
+			params[key] = data.get(key)
+	where = _where(clauses)
+
+	counts = (
+		"COUNT(*) AS total, COUNT(DISTINCT ct.employee) AS employees, "
+		"SUM(ct.status = 'Issued') AS issued, SUM(ct.status = 'Visited') AS visited, "
+		"SUM(ct.status = 'Expired') AS expired, SUM(ct.status = 'Cancelled') AS cancelled, "
+		"ROUND(AVG(CASE WHEN ct.arrived = 1 THEN ct.minutes_to_reach END)) AS avg_minutes_to_reach, "
+		"SUM(ct.urgency = 'Emergency') AS emergencies "
+	)
+	totals = frappe.db.sql("SELECT " + counts + "FROM `tabClinic Ticket` ct" + where, params, as_dict=True)[0]
+	kpis = {
+		k: int(totals.get(k) or 0)
+		for k in (
+			"total",
+			"employees",
+			"issued",
+			"visited",
+			"expired",
+			"cancelled",
+			"avg_minutes_to_reach",
+			"emergencies",
+		)
+	}
+	kpis["visit_rate"] = _pct(kpis["visited"], kpis["total"] - kpis["cancelled"])
+	has_gate_pass = frappe.db.has_column("Clinic Ticket", "gate_pass")
+	gp_col = "ct.gate_pass" if has_gate_pass else "NULL"
+
+	series_rows = frappe.db.sql(
+		"SELECT MONTH(ct.ticket_date) AS m, "
+		+ counts
+		+ "FROM `tabClinic Ticket` ct"
+		+ _where(_year_clauses(clauses))
+		+ " GROUP BY MONTH(ct.ticket_date)",
+		params,
+		as_dict=True,
+	)
+	by_department = frappe.db.sql(
+		"SELECT COALESCE(NULLIF(ct.department, ''), 'Unassigned') AS department, "
+		+ counts
+		+ "FROM `tabClinic Ticket` ct"
+		+ where
+		+ " GROUP BY department ORDER BY total DESC LIMIT 30",
+		params,
+		as_dict=True,
+	)
+	rows = frappe.db.sql(
+		"SELECT ct.name, ct.employee, ct.employee_name, ct.department, ct.ticket_date, ct.valid_until, "
+		f"ct.appointment_time, ct.urgency, ct.status, ct.visited_at, "
+		f"CASE WHEN ct.arrived = 1 THEN ct.minutes_to_reach END AS minutes_to_reach, {gp_col} AS gate_pass, "
+		"ct.reason FROM `tabClinic Ticket` ct"
+		+ where
+		+ " ORDER BY ct.ticket_date DESC, ct.creation DESC LIMIT 200",
+		params,
+		as_dict=True,
+	)
+	by_urgency = frappe.db.sql(
+		"SELECT COALESCE(NULLIF(ct.urgency, ''), 'Routine') AS urgency, "
+		+ counts
+		+ "FROM `tabClinic Ticket` ct"
+		+ where
+		+ " GROUP BY urgency",
+		params,
+		as_dict=True,
+	)
+	# The clinic desk: every ticket still waiting for its employee to arrive,
+	# regardless of the period filters — the desk works on today, not a report.
+	open_rows = frappe.db.sql(
+		f"SELECT ct.name, ct.employee, ct.employee_name, ct.department, ct.ticket_date, ct.valid_until, "
+		f"ct.appointment_time, ct.urgency, ct.reason, {gp_col} AS gate_pass "
+		"FROM `tabClinic Ticket` ct WHERE ct.status = 'Issued' "
+		"ORDER BY FIELD(ct.urgency, 'Emergency', 'Urgent', 'Routine'), ct.ticket_date, ct.appointment_time LIMIT 200",
+		as_dict=True,
+	)
+	for r in open_rows:
+		for k in ("ticket_date", "valid_until"):
+			r[k] = str(r[k]) if r.get(k) else ""
+		r["appointment_time"] = str(r["appointment_time"])[:5] if r.get("appointment_time") else ""
+		r["route"] = _desk_form_route("Clinic Ticket", r["name"])
+		if r.get("gate_pass"):
+			r["gate_pass_route"] = _desk_form_route("Gate Pass", r["gate_pass"])
+	for r in by_department + series_rows + by_urgency:
+		for k in (
+			"total",
+			"employees",
+			"issued",
+			"visited",
+			"expired",
+			"cancelled",
+			"avg_minutes_to_reach",
+			"emergencies",
+		):
+			r[k] = int(r.get(k) or 0)
+	for r in rows:
+		for k in ("ticket_date", "valid_until"):
+			r[k] = str(r[k]) if r.get(k) else ""
+		r["visited_at"] = str(r["visited_at"])[:16] if r.get("visited_at") else ""
+		r["appointment_time"] = str(r["appointment_time"])[:5] if r.get("appointment_time") else ""
+		r["route"] = _desk_form_route("Clinic Ticket", r["name"])
+
+	resp = {
+		"kpis": kpis,
+		"kpi_series": _kpi_series(series_rows, ["total", "visited", "issued", "expired"]),
+		"by_month": {
+			"months": list(MONTH_LABELS),
+			"visited": _kpi_series(series_rows, ["visited"])["visited"],
+			"total": _kpi_series(series_rows, ["total"])["total"],
+		},
+		"by_department": by_department,
+		"by_urgency": by_urgency,
+		"rows": rows,
+		"open_tickets": open_rows,
+		"gate_pass_enabled": has_gate_pass and frappe.db.exists("DocType", "Gate Pass") is not None,
+		"filter_options": {
+			"years": [
+				str(y)
+				for y in _option_values(
+					"SELECT DISTINCT YEAR(ticket_date) FROM `tabClinic Ticket` ORDER BY 1 DESC"
+				)
+			],
+			"months": list(MONTH_LABELS),
+			"departments": _option_values(
+				"SELECT DISTINCT department FROM `tabClinic Ticket` WHERE department IS NOT NULL ORDER BY 1"
+			),
+			"statuses": ["Issued", "Visited", "Expired", "Cancelled"],
+		},
+	}
+	frappe.response["message"] = resp
+	return resp
+
+
+@frappe.whitelist()
+def clinic_schedule_report():
+	"""Test Scheduling: the annual tests broken down by the test group,
+	department and designation each employee was scheduled under."""
+	assert_health_report_access("schedules")
+	data, year, month_num = _dashboard_request()
+
+	clauses, params = _period_clauses("tr.scheduled_from", year, month_num)
+	range_clauses, range_params = _range_clauses("tr.scheduled_from", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	clauses.insert(0, "tr.member_type = 'Active'")
+	for key in ("test_group", "test_package", "department", "designation"):
+		if data.get(key):
+			clauses.append(f"tr.{key} = %({key})s")
+			params[key] = data.get(key)
+	where = _where(clauses)
+	params["today"] = frappe.utils.nowdate()
+
+	counts = (
+		"COUNT(*) AS total, SUM(tr.status = 'Completed') AS completed, SUM(tr.status = 'Pending') AS pending, "
+		"SUM(tr.status = 'Pending' AND tr.scheduled_to < %(today)s) AS overdue, "
+		"SUM(tr.received_by_cova = 1) AS received "
+	)
+	keys = ("total", "completed", "pending", "overdue", "received")
+
+	def grouped(column, label):
+		rows = frappe.db.sql(
+			f"SELECT COALESCE(NULLIF(tr.{column}, ''), 'Unassigned') AS {label}, "
+			+ counts
+			+ "FROM `tabClinic Test Request` tr"
+			+ where
+			+ f" GROUP BY {label} ORDER BY total DESC LIMIT 40",
+			params,
+			as_dict=True,
+		)
+		for r in rows:
+			for k in keys:
+				r[k] = int(r.get(k) or 0)
+			r["completion_rate"] = _pct(r["completed"], r["total"])
+		return rows
+
+	totals = frappe.db.sql(
+		"SELECT " + counts + "FROM `tabClinic Test Request` tr" + where, params, as_dict=True
+	)[0]
+	kpis = {k: int(totals.get(k) or 0) for k in keys}
+	kpis["completion_rate"] = _pct(kpis["completed"], kpis["total"])
+
+	sched_clauses, sched_params = _period_clauses("cts.scheduled_from", year, month_num)
+	schedules = frappe.db.sql(
+		"SELECT cts.name, cts.title, cts.test_group, cts.test_package, cts.scheduled_from, cts.scheduled_to, "
+		"cts.total_employees, cts.requests_created, cts.status FROM `tabClinic Test Schedule` cts"
+		+ _where(sched_clauses)
+		+ " ORDER BY cts.scheduled_from DESC LIMIT 100",
+		sched_params,
+		as_dict=True,
+	)
+	for r in schedules:
+		for k in ("scheduled_from", "scheduled_to"):
+			r[k] = str(r[k]) if r.get(k) else ""
+		r["route"] = _desk_form_route("Clinic Test Schedule", r["name"])
+	kpis["schedules"] = len(schedules)
+
+	series_rows = frappe.db.sql(
+		"SELECT MONTH(tr.scheduled_from) AS m, "
+		+ counts
+		+ "FROM `tabClinic Test Request` tr"
+		+ _where(_year_clauses(clauses))
+		+ " GROUP BY MONTH(tr.scheduled_from)",
+		params,
+		as_dict=True,
+	)
+
+	resp = {
+		"kpis": kpis,
+		"kpi_series": _kpi_series(series_rows, list(keys)),
+		"by_group": grouped("test_group", "test_group"),
+		"by_department": grouped("department", "department"),
+		"by_designation": grouped("designation", "designation"),
+		"schedules": schedules,
+		"plans": _test_plans(),
+		"filter_options": {
+			"years": [
+				str(y)
+				for y in _option_values(
+					"SELECT DISTINCT YEAR(scheduled_from) FROM `tabClinic Test Request` ORDER BY 1 DESC"
+				)
+			],
+			"months": list(MONTH_LABELS),
+			"test_groups": sorted(
+				set(get_test_groups())
+				| set(
+					_option_values(
+						"SELECT DISTINCT test_group FROM `tabClinic Test Request` WHERE test_group IS NOT NULL"
+					)
+				)
+			),
+			"test_packages": _option_values(
+				"SELECT name FROM `tabTest Package` WHERE disabled = 0 ORDER BY name"
+			),
+			"departments": _option_values(
+				"SELECT DISTINCT department FROM `tabClinic Test Request` WHERE department IS NOT NULL ORDER BY 1"
+			),
+		},
+	}
+	frappe.response["message"] = resp
+	return resp
+
+
+# ─── work accidents ─────────────────────────────────────────────────────────
+
+
+@frappe.whitelist()
+def work_accident_report():
+	"""Work Accidents: every recorded workplace accident, and what they add up to."""
+	assert_health_report_access("accidents")
+	data, year, month_num = _dashboard_request()
+
+	clauses, params = _period_clauses("wa.accident_date", year, month_num)
+	range_clauses, range_params = _range_clauses("wa.accident_date", data)
+	clauses.extend(range_clauses)
+	params.update(range_params)
+	for key in ("department", "designation", "severity", "accident_type", "status"):
+		if data.get(key):
+			clauses.append(f"wa.{key} = %({key})s")
+			params[key] = data.get(key)
+	where = _where(clauses)
+
+	counts = (
+		"COUNT(*) AS total, COUNT(DISTINCT wa.employee) AS employees, "
+		"SUM(wa.lost_time_injury = 1) AS lost_time, COALESCE(SUM(wa.days_lost), 0) AS days_lost, "
+		"SUM(wa.severity IN ('Serious', 'Fatal')) AS serious, SUM(wa.severity = 'Fatal') AS fatal, "
+		"SUM(wa.first_aid_given = 1) AS first_aid, SUM(wa.status != 'Closed') AS open_cases "
+	)
+	keys = ("total", "employees", "lost_time", "days_lost", "serious", "fatal", "first_aid", "open_cases")
+	base = "FROM `tabWork Accident` wa"
+
+	def ints(rows):
+		for r in rows:
+			for k in keys:
+				r[k] = int(r.get(k) or 0)
+		return rows
+
+	totals = ints(frappe.db.sql("SELECT " + counts + base + where, params, as_dict=True))[0]
+	last_lti = frappe.db.sql("SELECT MAX(accident_date) FROM `tabWork Accident` WHERE lost_time_injury = 1")[
+		0
+	][0]
+	totals["days_since_lost_time"] = (
+		frappe.utils.date_diff(frappe.utils.nowdate(), last_lti) if last_lti else None
+	)
+
+	def grouped(column, label, order="total DESC"):
+		return ints(
+			frappe.db.sql(
+				f"SELECT COALESCE(NULLIF(wa.{column}, ''), 'Not recorded') AS {label}, "
+				+ counts
+				+ base
+				+ where
+				+ f" GROUP BY {label} ORDER BY {order} LIMIT 40",
+				params,
+				as_dict=True,
+			)
+		)
+
+	series_rows = ints(
+		frappe.db.sql(
+			"SELECT MONTH(wa.accident_date) AS m, "
+			+ counts
+			+ base
+			+ _where(_year_clauses(clauses))
+			+ " GROUP BY MONTH(wa.accident_date)",
+			params,
+			as_dict=True,
+		)
+	)
+	rows = frappe.db.sql(
+		"SELECT wa.name, wa.employee, wa.employee_name, wa.department, wa.accident_date, wa.accident_time, "
+		"wa.location, wa.accident_type, wa.severity, wa.body_part, wa.days_lost, wa.status, wa.clinic_ticket, "
+		"wa.first_aider, (SELECT fa.employee_name FROM `tabEmployee` fa WHERE fa.name = wa.first_aider) AS first_aider_name "
+		+ base
+		+ where
+		+ " ORDER BY wa.accident_date DESC, wa.creation DESC LIMIT 200",
+		params,
+		as_dict=True,
+	)
+	for r in rows:
+		r["accident_date"] = str(r["accident_date"]) if r.get("accident_date") else ""
+		r["accident_time"] = str(r["accident_time"])[:5] if r.get("accident_time") else ""
+		r["days_lost"] = int(r.get("days_lost") or 0)
+		r["route"] = _desk_form_route("Work Accident", r["name"])
+		if r.get("clinic_ticket"):
+			r["ticket_route"] = _desk_form_route("Clinic Ticket", r["clinic_ticket"])
+
+	meta = frappe.get_meta("Work Accident")
+	resp = {
+		"kpis": totals,
+		"kpi_series": _kpi_series(series_rows, list(keys)),
+		"by_month": {
+			"months": list(MONTH_LABELS),
+			"total": _kpi_series(series_rows, ["total"])["total"],
+			"lost_time": _kpi_series(series_rows, ["lost_time"])["lost_time"],
+		},
+		"by_type": grouped("accident_type", "accident_type"),
+		"by_department": grouped("department", "department"),
+		"by_body_part": grouped("body_part", "body_part"),
+		"by_severity": grouped(
+			"severity", "severity", "FIELD(severity, 'Fatal', 'Serious', 'Moderate', 'Minor')"
+		),
+		"rows": rows,
+		"first_aiders": _first_aiders(),
+		"filter_options": {
+			"years": [
+				str(y)
+				for y in _option_values(
+					"SELECT DISTINCT YEAR(accident_date) FROM `tabWork Accident` ORDER BY 1 DESC"
+				)
+			],
+			"months": list(MONTH_LABELS),
+			"severities": meta.get_field("severity").options.split("\n"),
+			"accident_types": meta.get_field("accident_type").options.split("\n"),
+			"body_parts": [o for o in meta.get_field("body_part").options.split("\n") if o],
+			"statuses": meta.get_field("status").options.split("\n"),
+		},
+	}
+	frappe.response["message"] = resp
+	return resp
+
+
+def _farm_column():
+	"""The Employee column that says which farm someone works on: the site's own
+	Farm field where it has one, otherwise the standard Branch."""
+	return "custom_farm" if frappe.db.has_column("Employee", "custom_farm") else "branch"
+
+
+def _first_aiders():
+	"""Active employees marked First Aider, by farm, with their phone, how many
+	accidents they have attended and whether their certificate is still good."""
+	farm = _farm_column()
+	fallback = "e.branch" if farm == "custom_farm" else "NULL"
+	rows = frappe.db.sql(
+		f"SELECT e.name, e.name AS employee, e.employee_name, e.cell_number AS phone, "
+		f"COALESCE(NULLIF(e.{farm}, ''), {fallback}) AS farm, e.department, "
+		"e.first_aid_certified_until AS certified_until, "
+		"(SELECT COUNT(*) FROM `tabWork Accident` wa WHERE wa.first_aider = e.name) AS attended "
+		"FROM `tabEmployee` e WHERE e.status = 'Active' AND e.is_first_aider = 1 "
+		"ORDER BY farm, e.employee_name",
+		as_dict=True,
+	)
+	today = frappe.utils.getdate()
+	for r in rows:
+		until = r.certified_until
+		if not until:
+			r.certificate = "Not recorded"
+		elif until < today:
+			r.certificate = "Expired"
+		elif frappe.utils.date_diff(until, today) <= 60:
+			r.certificate = "Expiring"
+		else:
+			r.certificate = "Valid"
+		r.certified_until = str(until) if until else ""
+		r.attended = int(r.attended or 0)
+		r.route = _desk_form_route("Employee", r.name)
+	return rows
+
+
+@frappe.whitelist()
+def add_first_aider():
+	"""Mark an employee as a first aider from the dashboard. Phone and farm are
+	the employee's own; a phone entered here is saved onto their record."""
+	assert_health_report_access("accidents")
+	data = frappe.request.get_json() or {}
+	employee = data.get("employee")
+	if not employee or not frappe.db.exists("Employee", employee):
+		frappe.throw(_("Pick the employee."))
+	values = {"is_first_aider": 1}
+	if data.get("certified_until"):
+		values["first_aid_certified_until"] = data["certified_until"]
+	phone = (data.get("phone") or "").strip()
+	if phone:
+		values["cell_number"] = phone
+	elif not frappe.db.get_value("Employee", employee, "cell_number"):
+		frappe.throw(
+			_("{0} has no mobile number on their employee record; enter one.").format(
+				frappe.db.get_value("Employee", employee, "employee_name")
+			)
+		)
+	frappe.db.set_value("Employee", employee, values)
+	row = frappe.db.get_value(
+		"Employee", employee, ["employee_name", "cell_number", _farm_column()], as_dict=True
+	)
+	out = {
+		"name": employee,
+		"employee_name": row.employee_name,
+		"phone": row.cell_number,
+		"farm": row.get(_farm_column()),
+	}
+	frappe.response["message"] = out
+	return out
+
+
+@frappe.whitelist()
+def record_work_accident():
+	"""Record a Work Accident from the dashboard, optionally sending the
+	employee to the clinic with a ticket."""
+	assert_health_report_access("accidents")
+	data = frappe.request.get_json() or {}
+	employee = data.get("employee")
+	if not employee or not frappe.db.exists("Employee", employee):
+		frappe.throw(_("Pick the employee who was hurt."))
+	doc = frappe.get_doc(
+		{
+			"doctype": "Work Accident",
+			"employee": employee,
+			"accident_date": data.get("accident_date") or frappe.utils.nowdate(),
+			"accident_time": data.get("accident_time") or None,
+			"location": data.get("location") or None,
+			"accident_type": data.get("accident_type"),
+			"severity": data.get("severity") or "Minor",
+			"body_part": data.get("body_part") or "",
+			"description": (data.get("description") or "").strip(),
+			"witness": data.get("witness") or None,
+			"first_aid_given": 1 if data.get("first_aid_given") else 0,
+			"first_aid_details": data.get("first_aid_details") or None,
+			"first_aider": data.get("first_aider") or None,
+			"days_lost": int(data.get("days_lost") or 0),
+		}
+	).insert(ignore_permissions=True)
+	out = {
+		"name": doc.name,
+		"employee_name": doc.employee_name,
+		"route": _desk_form_route("Work Accident", doc.name),
+	}
+	if data.get("send_to_clinic"):
+		out["clinic_ticket"] = doc.send_to_clinic(ignore_permissions=True)
+	frappe.response["message"] = out
+	return out
+
+
+# ─── actions from the dashboard ─────────────────────────────────────────────
+# Opened by the viewer's section ticks in Cova Clinic Settings, not by roles:
+# whoever may open Clinic Tickets may issue one, whoever may open Test
+# Scheduling may schedule. The documents are written without role checks for
+# that reason.
+
+
+LINK_DOCTYPES = ("Employee", "Department", "Designation")
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def dashboard_link_query(
+	doctype: str, txt: str, searchfield: str, start: int, page_len: int, filters: dict | list | None
+):
+	"""Search behind the dashboard's Employee / Department / Designation link
+	fields. Opened by the viewer's section ticks rather than read permission on
+	those doctypes, so a dashboard viewer without an HR role can still search."""
+	if not allowed_dashboard_sections():
+		frappe.throw(_("You are not permitted to view the Clinic dashboard."), frappe.PermissionError)
+	if doctype not in LINK_DOCTYPES:
+		frappe.throw(_("Cannot search {0} here.").format(doctype))
+	params = {"txt": f"%{txt or ''}%", "start": int(start or 0), "page_len": int(page_len or 20)}
+	if doctype == "Employee":
+		# {"is_first_aider": 1} narrows the list to first aiders, shown with
+		# their farm and phone so the nearest one is easy to pick.
+		if isinstance(filters, dict) and filters.get("is_first_aider"):
+			farm = _farm_column()
+			return frappe.db.sql(
+				f"SELECT name, employee_name, CONCAT_WS(' · ', NULLIF({farm}, ''), NULLIF(cell_number, '')) "
+				"FROM `tabEmployee` WHERE status = 'Active' AND is_first_aider = 1 AND (name LIKE %(txt)s "
+				"OR employee_name LIKE %(txt)s OR employee_number LIKE %(txt)s) "
+				"ORDER BY employee_name LIMIT %(start)s, %(page_len)s",
+				params,
+			)
+		return frappe.db.sql(
+			"SELECT name, employee_name, department "
+			"FROM `tabEmployee` WHERE status = 'Active' AND (name LIKE %(txt)s OR employee_name LIKE %(txt)s "
+			"OR employee_number LIKE %(txt)s) ORDER BY employee_name LIMIT %(start)s, %(page_len)s",
+			params,
+		)
+	if doctype == "Department":
+		return frappe.db.sql(
+			"SELECT name, department_name FROM `tabDepartment` WHERE COALESCE(disabled, 0) = 0 "
+			"AND (name LIKE %(txt)s OR department_name LIKE %(txt)s) ORDER BY name LIMIT %(start)s, %(page_len)s",
+			params,
+		)
+	return frappe.db.sql(
+		"SELECT name FROM `tabDesignation` WHERE name LIKE %(txt)s ORDER BY name LIMIT %(start)s, %(page_len)s",
+		params,
+	)
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def first_aider_link_query(
+	doctype: str, txt: str, searchfield: str, start: int, page_len: int, filters: dict | list | None
+):
+	"""The dashboard's Attended By picker: any active employee, searchable by
+	name, ID or payroll number, with those marked First Aider listed first and
+	labelled with their farm and phone. Its own query rather than a filtered
+	Employee link: a filtered link makes Frappe load Employee's desk scripts,
+	which a web page cannot run."""
+	if not allowed_dashboard_sections():
+		frappe.throw(_("You are not permitted to view the Clinic dashboard."), frappe.PermissionError)
+	farm = _farm_column()
+	return frappe.db.sql(
+		f"SELECT name, employee_name, CONCAT_WS(' \u00b7 ', IF(is_first_aider = 1, 'First Aider', NULL), "
+		f"NULLIF({farm}, ''), IF(is_first_aider = 1, NULLIF(cell_number, ''), NULLIF(department, ''))) "
+		"FROM `tabEmployee` WHERE status = 'Active' AND (name LIKE %(txt)s OR employee_name LIKE %(txt)s "
+		"OR employee_number LIKE %(txt)s) ORDER BY is_first_aider DESC, employee_name "
+		"LIMIT %(start)s, %(page_len)s",
+		{"txt": f"%{txt or ''}%", "start": int(start or 0), "page_len": int(page_len or 20)},
+	)
+
+
+@frappe.whitelist()
+def request_medical_attention():
+	"""Issue a Clinic Ticket from the dashboard: the employee is to be seen by
+	the clinic on ``ticket_date`` at ``appointment_time``."""
+	assert_health_report_access("tickets")
+	data = frappe.request.get_json() or {}
+	employee = data.get("employee")
+	if not employee or not frappe.db.exists("Employee", {"name": employee, "status": "Active"}):
+		frappe.throw(_("Pick an active employee."))
+	if not (data.get("reason") or "").strip():
+		frappe.throw(_("Say what the employee needs to be seen for."))
+	urgency = data.get("urgency") or "Routine"
+	if urgency not in ("Routine", "Urgent", "Emergency"):
+		frappe.throw(_("Unknown urgency {0}.").format(urgency))
+
+	ticket = frappe.get_doc(
+		{
+			"doctype": "Clinic Ticket",
+			"employee": employee,
+			"ticket_date": data.get("ticket_date") or frappe.utils.nowdate(),
+			"valid_until": data.get("valid_until") or None,
+			"appointment_time": data.get("appointment_time") or None,
+			"time_issued": frappe.utils.nowtime(),
+			"urgency": urgency,
+			"reason": data["reason"].strip(),
+		}
+	).insert(ignore_permissions=True)
+	out = {
+		"name": ticket.name,
+		"employee_name": ticket.employee_name,
+		"ticket_date": str(ticket.ticket_date),
+		"appointment_time": str(ticket.appointment_time or "")[:5],
+		"route": _desk_form_route("Clinic Ticket", ticket.name),
+	}
+	if data.get("raise_gate_pass"):
+		out.update(_raise_medical_gate_pass(ticket, data))
+	frappe.response["message"] = out
+	return out
+
+
+def _raise_medical_gate_pass(ticket, data):
+	"""A Medical Gate Pass for the ticket, raised in the same step. The pass
+	still goes through its own approval workflow; if it cannot be raised (no
+	supervisor set, already out on another pass, on leave…) the ticket stands
+	and the reason comes back instead."""
+	if not frappe.db.exists("DocType", "Gate Pass"):
+		return {"gate_pass_error": _("Gate Pass is not installed on this site.")}
+	frappe.db.savepoint("clinic_gate_pass")
+	try:
+		gp = frappe.get_doc(
+			{
+				"doctype": "Gate Pass",
+				"employee": ticket.employee,
+				"date": ticket.ticket_date,
+				"pass_type": "Medical",
+				"time_out": data.get("appointment_time") or frappe.utils.nowtime(),
+				"returning_same_day": 1,
+				"reason": ticket.reason,
+				"clinic_ticket": ticket.name,
+			}
+		)
+		gp.insert(ignore_permissions=True)
+	except Exception as e:
+		frappe.db.rollback(save_point="clinic_gate_pass")
+		frappe.clear_messages()
+		return {"gate_pass_error": frappe.utils.strip_html(str(e))}
+	return {"gate_pass": gp.name, "gate_pass_route": _desk_form_route("Gate Pass", gp.name)}
+
+
+@frappe.whitelist()
+def mark_ticket_arrived():
+	"""The clinic desk: the employee on ``ticket`` has arrived. Records their
+	Clinic Checkin (an IN at ``arrived_at``, now by default), which flags the
+	ticket as arrived and works out how long they took to get there."""
+	assert_health_report_access("tickets")
+	data = frappe.request.get_json() or {}
+	name = data.get("ticket")
+	ticket = (
+		frappe.db.get_value("Clinic Ticket", name, ["name", "employee", "status"], as_dict=True)
+		if name
+		else None
+	)
+	if not ticket:
+		frappe.throw(_("Clinic Ticket {0} not found.").format(name))
+	if ticket.status != "Issued":
+		frappe.throw(_("Clinic Ticket {0} is already {1}.").format(name, ticket.status))
+
+	arrived_at = (
+		frappe.utils.get_datetime(data.get("arrived_at"))
+		if data.get("arrived_at")
+		else frappe.utils.now_datetime()
+	)
+	checkin = frappe.get_doc(
+		{"doctype": "Clinic Checkin", "employee": ticket.employee, "log_type": "IN", "time": arrived_at}
+	)
+	checkin.flags.clinic_ticket = ticket.name
+	checkin.insert(ignore_permissions=True)
+
+	out = frappe.db.get_value(
+		"Clinic Ticket",
+		name,
+		["name", "employee_name", "status", "visited_at", "minutes_to_reach"],
+		as_dict=True,
+	)
+	out["visited_at"] = str(out.visited_at)[:16] if out.visited_at else ""
+	frappe.response["message"] = out
+	return out
+
+
+def _test_plans():
+	"""Every Clinic Test Plan with its progress and next round, newest period first."""
+	plans = frappe.get_all(
+		"Clinic Test Plan",
+		fields=[
+			"name",
+			"test_group",
+			"test_package",
+			"period_from",
+			"period_to",
+			"number_of_rounds",
+			"total_employees",
+			"employees_per_round",
+			"scheduled_employees",
+			"tested_employees",
+			"remaining_employees",
+			"progress",
+			"status",
+		],
+		order_by="period_from desc",
+		limit=50,
+	)
+	rounds = frappe.get_all(
+		"Clinic Test Plan Round",
+		filters={"parenttype": "Clinic Test Plan", "parent": ["in", [p.name for p in plans] or [""]]},
+		fields=["parent", "round_no", "scheduled_from", "scheduled_to", "status", "skipped_on_leave"],
+		order_by="round_no asc",
+	)
+	for p in plans:
+		mine = [r for r in rounds if r.parent == p.name]
+		nxt = next((r for r in mine if r.status == "Planned"), None)
+		p.rounds_done = sum(1 for r in mine if r.status == "Scheduled")
+		p.rounds = len(mine)
+		p.on_leave_carried = sum(int(r.skipped_on_leave or 0) for r in mine)
+		p.next_round = nxt.round_no if nxt else None
+		p.next_window = f"{nxt.scheduled_from} \u2013 {nxt.scheduled_to}" if nxt else ""
+		p.period = f"{p.period_from} \u2013 {p.period_to}"
+		p.period_from = str(p.period_from)
+		p.period_to = str(p.period_to)
+		p.route = _desk_form_route("Clinic Test Plan", p.name)
+	return plans
+
+
+@frappe.whitelist()
+def create_test_plan():
+	"""New Clinic Test Plan from the dashboard, with its rounds laid out."""
+	assert_health_report_access("schedules")
+	data = frappe.request.get_json() or {}
+	plan = frappe.get_doc(
+		{
+			"doctype": "Clinic Test Plan",
+			"test_group": data.get("test_group"),
+			"company": get_clinic_company(),
+			"period_from": data.get("period_from"),
+			"period_to": data.get("period_to"),
+			"number_of_rounds": int(data.get("number_of_rounds") or 1),
+			"send_to_cova": 1 if data.get("send_to_cova", True) else 0,
+			"notes": data.get("notes") or None,
+		}
+	)
+	plan.flags.ignore_permissions = True
+	plan.insert()
+	plan.generate_rounds()
+	out = {
+		"name": plan.name,
+		"total_employees": plan.total_employees,
+		"employees_per_round": plan.employees_per_round,
+		"rounds": len(plan.rounds),
+		"route": _desk_form_route("Clinic Test Plan", plan.name),
+	}
+	frappe.response["message"] = out
+	return out
+
+
+@frappe.whitelist()
+def schedule_plan_round():
+	"""Schedule the next round of a Clinic Test Plan from the dashboard."""
+	assert_health_report_access("schedules")
+	data = frappe.request.get_json() or {}
+	plan = frappe.get_doc("Clinic Test Plan", data.get("plan"))
+	plan.flags.ignore_permissions = True
+	out = plan.schedule_next_round()
+	out["route"] = _desk_form_route("Clinic Test Schedule", out["schedule"])
+	frappe.response["message"] = out
+	return out
+
+
+def _dashboard_schedule(data):
+	"""An unsaved Clinic Test Schedule from the dashboard's Schedule Tests form."""
+	from cova_clinic_integration.cova_clinic_integration.doctype.clinic_test_schedule.clinic_test_schedule import (
+		test_group_filters,
+	)
+
+	group_name = data.get("test_group")
+	if not group_name:
+		frappe.throw(_("Pick a test group."))
+	group = test_group_filters(group_name)
+	if not (data.get("scheduled_from") and data.get("scheduled_to")):
+		frappe.throw(_("Pick the dates the tests are to be done."))
+
+	doc = frappe.new_doc("Clinic Test Schedule")
+	doc.update(
+		{
+			"title": f"{str(data['scheduled_from'])[:4]} {group_name}",
+			"test_group": group_name,
+			"test_package": group["test_package"],
+			"company": get_clinic_company(),
+			"scheduled_from": data["scheduled_from"],
+			"scheduled_to": data["scheduled_to"],
+			"employees_per_designation": int(
+				data.get("employees_per_designation") or group["employees_per_designation"] or 0
+			),
+			"skip_already_scheduled": 1,
+			"skip_employees_on_leave": 1,
+			"send_to_cova": 1 if data.get("send_to_cova", True) else 0,
+			"notes": data.get("notes") or None,
+		}
+	)
+	for dept in group["departments"]:
+		doc.append("departments", {"department": dept})
+	for desig in group["designations"]:
+		doc.append("designations", {"designation": desig})
+	doc.flags.ignore_permissions = True
+	return doc
+
+
+@frappe.whitelist()
+def preview_test_schedule():
+	"""Who the Schedule Tests form would pick up, before anything is created."""
+	assert_health_report_access("schedules")
+	doc = _dashboard_schedule(frappe.request.get_json() or {})
+	if not doc.company:
+		frappe.throw(_("Set the Company in Cova Clinic Settings first."))
+	employees = doc.matching_employees()
+	by_designation = {}
+	for e in employees:
+		by_designation[e.designation or "Unassigned"] = (
+			by_designation.get(e.designation or "Unassigned", 0) + 1
+		)
+	out = {
+		"count": len(employees),
+		"test_package": doc.test_package,
+		"employees_per_designation": doc.employees_per_designation,
+		"by_designation": [{"designation": k, "count": v} for k, v in sorted(by_designation.items())],
+		# On leave during the window: not scheduled now, picked up next time.
+		"on_leave": [{"employee": e.name, "employee_name": e.employee_name} for e in doc.on_leave],
+		"employees": [
+			{
+				"employee": e.name,
+				"employee_name": e.employee_name,
+				"designation": e.designation,
+				"department": e.department,
+			}
+			for e in employees[:100]
+		],
+	}
+	frappe.response["message"] = out
+	return out
+
+
+@frappe.whitelist()
+def schedule_tests():
+	"""Schedule Tests from the dashboard: save a Clinic Test Schedule for the
+	group, pull in who is due, raise their test requests and send them to Cova."""
+	assert_health_report_access("schedules")
+	doc = _dashboard_schedule(frappe.request.get_json() or {})
+	doc.insert()
+	doc.get_employees()
+	if not doc.employees:
+		out = {
+			"schedule": doc.name,
+			"route": _desk_form_route("Clinic Test Schedule", doc.name),
+			"created": 0,
+			"sent": 0,
+			"failed": 0,
+			"failures": [],
+			"send_skipped": False,
+			"employees": 0,
+		}
+	else:
+		out = doc.create_test_requests()
+		out.update(
+			{
+				"schedule": doc.name,
+				"employees": len(doc.employees),
+				"route": _desk_form_route("Clinic Test Schedule", doc.name),
+			}
+		)
+	frappe.response["message"] = out
+	return out
 
 
 # ─── XLSX export for the Clinic Analytics portal page ──────────────────────
