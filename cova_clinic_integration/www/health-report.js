@@ -4092,9 +4092,9 @@
 						"<span>" +
 						esc(stayDuration(total) || "0m") +
 						" in clinic</span></div>";
-					function t(ts) {
+					var t = function (ts) {
 						return ts ? ts.slice(11, 16) : "\u2014";
-					}
+					};
 					var prevDay = null;
 					rows.forEach(function (r) {
 						if (r.day !== prevDay) {
@@ -4177,13 +4177,13 @@
 						(isEmp ? "Seen" : "People") +
 						"</span></div>";
 
-					function stamp(ts) {
+					var stamp = function (ts) {
 						// Time only when the range is a single day; date otherwise.
 						if (!ts) {
 							return "\u2014";
 						}
 						return ts.slice(0, 10) === today ? ts.slice(11, 16) : ts.slice(0, 10);
-					}
+					};
 					var today =
 						filters.from_date && filters.from_date === filters.to_date
 							? filters.from_date

@@ -3,13 +3,21 @@
 
 import frappe
 
-from cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket import expire_tickets
 from cova_clinic_integration import api
+from cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket import expire_tickets
 from cova_clinic_integration.testing import IntegrationTestCase, make_employee, stub_request
 
 IGNORE_TEST_RECORD_DEPENDENCIES = [
-	"Employee", "Company", "Department", "Designation", "User",
-	"Clinic Checkin", "Clinic Test Request", "Leave Application", "Cova Members", "Test Package",
+	"Employee",
+	"Company",
+	"Department",
+	"Designation",
+	"User",
+	"Clinic Checkin",
+	"Clinic Test Request",
+	"Leave Application",
+	"Cova Members",
+	"Test Package",
 ]
 
 
@@ -21,7 +29,12 @@ class TestClinicTicket(IntegrationTestCase):
 		frappe.db.rollback()
 
 	def _ticket(self, **kw):
-		doc = {"doctype": "Clinic Ticket", "employee": self.employee, "ticket_date": "2026-09-01", "reason": "headache"}
+		doc = {
+			"doctype": "Clinic Ticket",
+			"employee": self.employee,
+			"ticket_date": "2026-09-01",
+			"reason": "headache",
+		}
 		doc.update(kw)
 		return frappe.get_doc(doc).insert()
 
@@ -37,18 +50,28 @@ class TestClinicTicket(IntegrationTestCase):
 
 	def test_checkin_marks_the_ticket_visited(self):
 		ticket = self._ticket(valid_until="2026-09-02")
-		checkin = frappe.get_doc({
-			"doctype": "Clinic Checkin", "employee": self.employee, "log_type": "IN", "time": "2026-09-02 09:10:00",
-		}).insert(ignore_permissions=True)
+		checkin = frappe.get_doc(
+			{
+				"doctype": "Clinic Checkin",
+				"employee": self.employee,
+				"log_type": "IN",
+				"time": "2026-09-02 09:10:00",
+			}
+		).insert(ignore_permissions=True)
 		ticket.reload()
 		self.assertEqual(ticket.status, "Visited")
 		self.assertEqual(ticket.clinic_checkin, checkin.name)
 
 	def test_checkin_outside_the_window_leaves_the_ticket_open(self):
 		ticket = self._ticket()
-		frappe.get_doc({
-			"doctype": "Clinic Checkin", "employee": self.employee, "log_type": "IN", "time": "2026-09-05 09:10:00",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Clinic Checkin",
+				"employee": self.employee,
+				"log_type": "IN",
+				"time": "2026-09-05 09:10:00",
+			}
+		).insert(ignore_permissions=True)
 		ticket.reload()
 		self.assertEqual(ticket.status, "Issued")
 
@@ -59,9 +82,14 @@ class TestClinicTicket(IntegrationTestCase):
 
 	def test_arrival_flags_the_ticket_with_the_time_taken(self):
 		ticket = self._ticket(time_issued="08:00:00")
-		frappe.get_doc({
-			"doctype": "Clinic Checkin", "employee": self.employee, "log_type": "IN", "time": "2026-09-01 08:25:00",
-		}).insert(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "Clinic Checkin",
+				"employee": self.employee,
+				"log_type": "IN",
+				"time": "2026-09-01 08:25:00",
+			}
+		).insert(ignore_permissions=True)
 		ticket.reload()
 		self.assertEqual(ticket.arrived, 1)
 		self.assertEqual(str(ticket.visited_at), "2026-09-01 08:25:00")
@@ -69,8 +97,13 @@ class TestClinicTicket(IntegrationTestCase):
 		self.assertEqual(ticket.minutes_to_reach, 25)
 
 	def test_request_and_mark_arrived_from_the_dashboard(self):
-		body = {"employee": self.employee, "ticket_date": "2026-09-03", "appointment_time": "10:30",
-			"urgency": "Urgent", "reason": "chest pain"}
+		body = {
+			"employee": self.employee,
+			"ticket_date": "2026-09-03",
+			"appointment_time": "10:30",
+			"urgency": "Urgent",
+			"reason": "chest pain",
+		}
 		with stub_request(json_body=body):
 			out = api.request_medical_attention()
 		ticket = frappe.get_doc("Clinic Ticket", out["name"])

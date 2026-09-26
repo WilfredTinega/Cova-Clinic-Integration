@@ -6,8 +6,16 @@ import frappe
 from cova_clinic_integration.testing import IntegrationTestCase, make_employee
 
 IGNORE_TEST_RECORD_DEPENDENCIES = [
-	"Employee", "Company", "Department", "Designation", "User",
-	"Clinic Checkin", "Clinic Test Request", "Leave Application", "Cova Members", "Test Package",
+	"Employee",
+	"Company",
+	"Department",
+	"Designation",
+	"User",
+	"Clinic Checkin",
+	"Clinic Test Request",
+	"Leave Application",
+	"Cova Members",
+	"Test Package",
 ]
 
 
@@ -59,11 +67,16 @@ class TestClinicTestSchedule(IntegrationTestCase):
 		result = sched.create_test_requests()
 		self.assertEqual(result["created"], 1)
 		request = sched.employees[0].test_request
-		self.assertEqual(frappe.db.get_value("Clinic Test Request", request, "test_package"), "Annual Medical")
+		self.assertEqual(
+			frappe.db.get_value("Clinic Test Request", request, "test_package"), "Annual Medical"
+		)
 		# The request remembers the schedule, group and the department and
 		# designation it was scheduled under.
 		values = frappe.db.get_value(
-			"Clinic Test Request", request, ["clinic_test_schedule", "test_group", "designation"], as_dict=True
+			"Clinic Test Request",
+			request,
+			["clinic_test_schedule", "test_group", "designation"],
+			as_dict=True,
 		)
 		self.assertEqual(values.clinic_test_schedule, sched.name)
 		self.assertEqual(values.test_group, "Cholinesterase")
@@ -90,10 +103,17 @@ class TestClinicTestSchedule(IntegrationTestCase):
 		if not frappe.db.exists("Designation", "CV Sprayer"):
 			frappe.get_doc({"doctype": "Designation", "designation_name": "CV Sprayer"}).insert()
 		settings = frappe.get_doc("Cova Clinic Settings")
-		settings.set("test_groups", [
-			{"group_name": "CV Chol", "test_package": "Annual Medical", "designation": "CV Sprayer",
-			 "employees_per_designation": 5},
-		])
+		settings.set(
+			"test_groups",
+			[
+				{
+					"group_name": "CV Chol",
+					"test_package": "Annual Medical",
+					"designation": "CV Sprayer",
+					"employees_per_designation": 5,
+				},
+			],
+		)
 		settings.save(ignore_permissions=True)
 
 		self.assertIn("CV Chol", test_group_filters())
@@ -108,13 +128,20 @@ class TestClinicTestSchedule(IntegrationTestCase):
 
 		settings = frappe.get_doc("Cova Clinic Settings")
 		settings.company = self.company
-		settings.set("test_groups", [
-			{"group_name": "CV Dash", "test_package": "Annual Medical", "designation": self.designation},
-		])
+		settings.set(
+			"test_groups",
+			[
+				{"group_name": "CV Dash", "test_package": "Annual Medical", "designation": self.designation},
+			],
+		)
 		settings.save(ignore_permissions=True)
 
-		body = {"test_group": "CV Dash", "scheduled_from": "2026-11-01", "scheduled_to": "2026-11-10",
-			"send_to_cova": False}
+		body = {
+			"test_group": "CV Dash",
+			"scheduled_from": "2026-11-01",
+			"scheduled_to": "2026-11-10",
+			"send_to_cova": False,
+		}
 		with stub_request(json_body=body):
 			preview = api.preview_test_schedule()
 		self.assertGreaterEqual(preview["count"], 1)
@@ -122,5 +149,8 @@ class TestClinicTestSchedule(IntegrationTestCase):
 		with stub_request(json_body=body):
 			result = api.schedule_tests()
 		self.assertEqual(result["created"], result["employees"])
-		self.assertTrue(frappe.db.exists("Clinic Test Request", {"clinic_test_schedule": result["schedule"],
-			"employee": self.employee}))
+		self.assertTrue(
+			frappe.db.exists(
+				"Clinic Test Request", {"clinic_test_schedule": result["schedule"], "employee": self.employee}
+			)
+		)

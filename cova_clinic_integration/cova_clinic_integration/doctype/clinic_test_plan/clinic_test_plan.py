@@ -36,7 +36,9 @@ class ClinicTestPlan(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_test_plan_round.clinic_test_plan_round import ClinicTestPlanRound
+		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_test_plan_round.clinic_test_plan_round import (
+			ClinicTestPlanRound,
+		)
 
 		company: DF.Link
 		employees_per_round: DF.Int
@@ -78,9 +80,7 @@ class ClinicTestPlan(Document):
 
 	def employees(self, **kw):
 		group = self.group()
-		return group_employees(
-			self.company, group["departments"], group["designations"], **kw
-		)
+		return group_employees(self.company, group["departments"], group["designations"], **kw)
 
 	def update_metrics(self):
 		"""Group size, and how far through the period the plan has got."""
@@ -150,7 +150,11 @@ class ClinicTestPlan(Document):
 			frappe.throw(_("Every round of this plan is already scheduled."))
 		rnd = pending[0]
 		window = (rnd.scheduled_from, rnd.scheduled_to)
-		common = {"package": self.test_package, "already_from": self.period_from, "already_to": self.period_to}
+		common = {
+			"package": self.test_package,
+			"already_from": self.period_from,
+			"already_to": self.period_to,
+		}
 
 		available = self.employees(**common, leave_window=window)
 		on_leave = self.employees(**common, leave_window=window, on_leave=True)
@@ -160,40 +164,53 @@ class ClinicTestPlan(Document):
 
 		group = self.group()
 		schedule = frappe.new_doc("Clinic Test Schedule")
-		schedule.update({
-			"title": _("{0} — Round {1} of {2}").format(self.test_group, rnd.round_no, len(self.rounds)),
-			"test_group": self.test_group,
-			"test_package": self.test_package,
-			"company": self.company,
-			"scheduled_from": rnd.scheduled_from,
-			"scheduled_to": rnd.scheduled_to,
-			"skip_already_scheduled": 1,
-			"skip_employees_on_leave": 1,
-			"send_to_cova": self.send_to_cova,
-			"notes": self.notes,
-		})
+		schedule.update(
+			{
+				"title": _("{0} — Round {1} of {2}").format(self.test_group, rnd.round_no, len(self.rounds)),
+				"test_group": self.test_group,
+				"test_package": self.test_package,
+				"company": self.company,
+				"scheduled_from": rnd.scheduled_from,
+				"scheduled_to": rnd.scheduled_to,
+				"skip_already_scheduled": 1,
+				"skip_employees_on_leave": 1,
+				"send_to_cova": self.send_to_cova,
+				"notes": self.notes,
+			}
+		)
 		for dept in group["departments"]:
 			schedule.append("departments", {"department": dept})
 		for desig in group["designations"]:
 			schedule.append("designations", {"designation": desig})
 		for e in picked:
-			schedule.append("employees", {
-				"employee": e.name, "employee_name": e.employee_name,
-				"department": e.department, "designation": e.designation,
-			})
+			schedule.append(
+				"employees",
+				{
+					"employee": e.name,
+					"employee_name": e.employee_name,
+					"department": e.department,
+					"designation": e.designation,
+				},
+			)
 		schedule.flags.ignore_permissions = bool(self.flags.ignore_permissions)
 		schedule.insert()
-		result = schedule.create_test_requests() if picked else {"created": 0, "sent": 0, "failed": 0, "failures": []}
+		result = (
+			schedule.create_test_requests()
+			if picked
+			else {"created": 0, "sent": 0, "failed": 0, "failures": []}
+		)
 
 		rnd.status = "Scheduled"
 		rnd.clinic_test_schedule = schedule.name
 		rnd.scheduled_employees = len(picked)
 		rnd.skipped_on_leave = len(on_leave)
 		self.save()
-		result.update({
-			"round": rnd.round_no,
-			"schedule": schedule.name,
-			"scheduled": len(picked),
-			"on_leave": [{"employee": e.name, "employee_name": e.employee_name} for e in on_leave],
-		})
+		result.update(
+			{
+				"round": rnd.round_no,
+				"schedule": schedule.name,
+				"scheduled": len(picked),
+				"on_leave": [{"employee": e.name, "employee_name": e.employee_name} for e in on_leave],
+			}
+		)
 		return result

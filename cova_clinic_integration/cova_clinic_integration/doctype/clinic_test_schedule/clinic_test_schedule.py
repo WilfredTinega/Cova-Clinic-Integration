@@ -58,8 +58,7 @@ def group_employees(
 		params.update({"window_from": leave_window[0], "window_to": leave_window[1]})
 	return frappe.db.sql(
 		"SELECT e.name, e.employee_name, e.department, e.designation "
-		"FROM `tabEmployee` e WHERE " + " AND ".join(clauses)
-		+ " ORDER BY e.designation, e.employee_name",
+		"FROM `tabEmployee` e WHERE " + " AND ".join(clauses) + " ORDER BY e.designation, e.employee_name",
 		params,
 		as_dict=True,
 	)
@@ -74,9 +73,15 @@ class ClinicTestSchedule(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_schedule_department.clinic_schedule_department import ClinicScheduleDepartment
-		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_schedule_designation.clinic_schedule_designation import ClinicScheduleDesignation
-		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_schedule_employee.clinic_schedule_employee import ClinicScheduleEmployee
+		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_schedule_department.clinic_schedule_department import (
+			ClinicScheduleDepartment,
+		)
+		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_schedule_designation.clinic_schedule_designation import (
+			ClinicScheduleDesignation,
+		)
+		from cova_clinic_integration.cova_clinic_integration.doctype.clinic_schedule_employee.clinic_schedule_employee import (
+			ClinicScheduleEmployee,
+		)
 
 		company: DF.Link
 		departments: DF.TableMultiSelect[ClinicScheduleDepartment]
@@ -101,7 +106,11 @@ class ClinicTestSchedule(Document):
 	def validate(self):
 		if not self.company:
 			self.company = get_clinic_company()
-		if self.scheduled_from and self.scheduled_to and getdate(self.scheduled_to) < getdate(self.scheduled_from):
+		if (
+			self.scheduled_from
+			and self.scheduled_to
+			and getdate(self.scheduled_to) < getdate(self.scheduled_from)
+		):
 			frappe.throw(_("Scheduled To cannot be before Scheduled From."))
 		self.year = getdate(self.scheduled_from).year if self.scheduled_from else None
 
@@ -143,14 +152,17 @@ class ClinicTestSchedule(Document):
 		for emp in candidates:
 			if emp.name in already:
 				continue
-			self.append("employees", {
-				"employee": emp.name,
-				"employee_name": emp.employee_name,
-				"department": emp.department,
-				"designation": emp.designation,
-				"scheduled_from": self.scheduled_from,
-				"scheduled_to": self.scheduled_to,
-			})
+			self.append(
+				"employees",
+				{
+					"employee": emp.name,
+					"employee_name": emp.employee_name,
+					"department": emp.department,
+					"designation": emp.designation,
+					"scheduled_from": self.scheduled_from,
+					"scheduled_to": self.scheduled_to,
+				},
+			)
 			already.add(emp.name)
 			added += 1
 		self.save()
@@ -214,30 +226,36 @@ class ClinicTestSchedule(Document):
 		for row in self.employees:
 			if row.test_request:
 				continue
-			request = frappe.get_doc({
-				"doctype": "Clinic Test Request",
-				"member_type": "Active",
-				"employee": row.employee,
-				"department": row.department,
-				"designation": row.designation,
-				"clinic_test_schedule": self.name,
-				"test_group": self.test_group,
-				"status": "Pending",
-				"test_package": self.test_package,
-				"scheduled_from": row.scheduled_from or self.scheduled_from,
-				"scheduled_to": row.scheduled_to or self.scheduled_to,
-				"notes": self.notes or _("Annual medical schedule {0}").format(self.name),
-			}).insert(ignore_permissions=bool(self.flags.ignore_permissions))
+			request = frappe.get_doc(
+				{
+					"doctype": "Clinic Test Request",
+					"member_type": "Active",
+					"employee": row.employee,
+					"department": row.department,
+					"designation": row.designation,
+					"clinic_test_schedule": self.name,
+					"test_group": self.test_group,
+					"status": "Pending",
+					"test_package": self.test_package,
+					"scheduled_from": row.scheduled_from or self.scheduled_from,
+					"scheduled_to": row.scheduled_to or self.scheduled_to,
+					"notes": self.notes or _("Annual medical schedule {0}").format(self.name),
+				}
+			).insert(ignore_permissions=bool(self.flags.ignore_permissions))
 			row.test_request = request.name
 			created += 1
 
 			if can_send:
 				result = send_test_request(request, action="clinic_test_schedule")
 				if result.get("error"):
-					failures.append({"employee": row.employee, "request": request.name, "reason": result["error"]})
+					failures.append(
+						{"employee": row.employee, "request": request.name, "reason": result["error"]}
+					)
 				else:
 					sent += 1
-			row.received_by_cova = frappe.db.get_value("Clinic Test Request", request.name, "received_by_cova")
+			row.received_by_cova = frappe.db.get_value(
+				"Clinic Test Request", request.name, "received_by_cova"
+			)
 
 		self.save()
 		return {

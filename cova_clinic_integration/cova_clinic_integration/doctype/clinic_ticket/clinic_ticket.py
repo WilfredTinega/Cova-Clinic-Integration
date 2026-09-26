@@ -174,9 +174,9 @@ def gate_pass_validate(doc, method=None):
 	):
 		if other.get("workflow_state") != "Rejected":
 			frappe.throw(
-				_("Clinic Ticket {0} already has Gate Pass {1}. Use that one rather than raising another.").format(
-					ticket, frappe.utils.get_link_to_form("Gate Pass", other.name)
-				),
+				_(
+					"Clinic Ticket {0} already has Gate Pass {1}. Use that one rather than raising another."
+				).format(ticket, frappe.utils.get_link_to_form("Gate Pass", other.name)),
 				title=_("Gate Pass Already Raised"),
 			)
 
@@ -225,12 +225,14 @@ def ticket_from_gate_pass(doc, method=None):
 		return
 
 	ticket = frappe.new_doc("Clinic Ticket")
-	ticket.update({
-		"employee": doc.employee,
-		"ticket_date": doc.date,
-		"time_issued": doc.get("time_out"),
-		"reason": doc.get("reason") or _("Medical gate pass {0}").format(doc.name),
-		"issued_by": doc.get("hr_approver") or frappe.session.user,
-		"gate_pass": doc.name,
-	})
+	ticket.update(
+		{
+			"employee": doc.employee,
+			"ticket_date": doc.date,
+			"time_issued": doc.get("time_out"),
+			"reason": doc.get("reason") or _("Medical gate pass {0}").format(doc.name),
+			"issued_by": doc.get("hr_approver") or frappe.session.user,
+			"gate_pass": doc.name,
+		}
+	)
 	ticket.insert(ignore_permissions=True)

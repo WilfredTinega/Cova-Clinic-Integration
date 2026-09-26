@@ -122,9 +122,7 @@ class ClinicCheckin(Document):
 			)
 
 			available_balance = (
-				balance_result[0][0]
-				if balance_result and balance_result[0][0] is not None
-				else 0
+				balance_result[0][0] if balance_result and balance_result[0][0] is not None else 0
 			)
 
 			leave = frappe.new_doc("Leave Application")

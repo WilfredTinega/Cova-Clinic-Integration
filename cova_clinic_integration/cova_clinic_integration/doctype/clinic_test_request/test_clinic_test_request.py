@@ -5,11 +5,19 @@ import frappe
 
 from cova_clinic_integration.testing import IntegrationTestCase, make_employee
 
-
 # The automatic link crawl reaches Company and trips the Fiscal Year overlap on
 # a site that already has one. These fixtures build the Employee they need
 # themselves (see cova_clinic_integration.testing.make_employee).
-IGNORE_TEST_RECORD_DEPENDENCIES = ["Employee", "Company", "Leave Application", "Department", "Designation", "Clinic Test Schedule", "Clinic Ticket"]
+IGNORE_TEST_RECORD_DEPENDENCIES = [
+	"Employee",
+	"Company",
+	"Leave Application",
+	"Department",
+	"Designation",
+	"Clinic Test Schedule",
+	"Clinic Ticket",
+]
+
 
 class TestClinicTestRequest(IntegrationTestCase):
 	"""The request is what the app sends COVA and what ``receive_test_result``

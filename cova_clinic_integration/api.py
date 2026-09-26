@@ -1968,7 +1968,9 @@ def clinic_checkin_report():
 		as_dict=True,
 	)
 	so_series = _kpi_series(so_series_rows, ["records", "employees", "days", "with_leave"])
-	so_series["without_leave"] = [r - w for r, w in zip(so_series["records"], so_series["with_leave"], strict=False)]
+	so_series["without_leave"] = [
+		r - w for r, w in zip(so_series["records"], so_series["with_leave"], strict=False)
+	]
 	so_series["avg_days"] = _ratio_series(so_series["days"], so_series["records"])
 
 	# ── seen at an external facility (Clinic Checkin.is_external) ─────
@@ -2323,7 +2325,7 @@ def clinic_visit_cost_report():
 		"SELECT MONTH(cv.visit_date) AS m, "
 		+ ", ".join(f"COALESCE(cv.{f}, 0) AS {f}" for f, _label in BENEFITS)
 		+ " FROM `tabClinic Visit Cost` cv"
-		+ _where([*list(clauses), "cv.visit_date IS NOT NULL"])
+		+ _where([*clauses, "cv.visit_date IS NOT NULL"])
 		+ " ORDER BY cv.visit_date ASC, cv.creation ASC",
 		params,
 		as_dict=True,
@@ -2387,7 +2389,7 @@ def clinic_visit_cost_report():
 		"MAX(cv.payroll_number) AS payroll_number, COUNT(*) AS visits, "
 		"COALESCE(SUM(cv.total_cost), 0) AS cost, MAX(cv.visit_date) AS last_visit "
 		"FROM `tabClinic Visit Cost` cv LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
-		+ _where([*list(clauses), "cv.visit_date IS NOT NULL", _NO_CHECKIN_CLAUSE])
+		+ _where([*clauses, "cv.visit_date IS NOT NULL", _NO_CHECKIN_CLAUSE])
 		+ " GROUP BY cv.employee, e.employee_name, cv.full_name, cv.candidate_name"
 		" ORDER BY cost DESC LIMIT 100",
 		params,
@@ -2404,7 +2406,7 @@ def clinic_visit_cost_report():
 		"COALESCE(e.employee_name, cv.full_name, cv.candidate_name, cv.employee) AS employee_name, "
 		"MONTH(cv.visit_date) AS m, COALESCE(SUM(cv.total_cost), 0) AS cost "
 		"FROM `tabClinic Visit Cost` cv LEFT JOIN `tabEmployee` e ON e.name = cv.employee"
-		+ _where([*list(clauses), "cv.visit_date IS NOT NULL"])
+		+ _where([*clauses, "cv.visit_date IS NOT NULL"])
 		+ " GROUP BY cv.employee, e.employee_name, cv.full_name, cv.candidate_name, MONTH(cv.visit_date)",
 		params,
 		as_dict=True,
@@ -2628,7 +2630,7 @@ def clinic_test_request_report():
 		as_dict=True,
 	)
 
-	overdue_clauses = [*list(clauses), "tr.status = 'Pending'", "tr.scheduled_to < CURDATE()"]
+	overdue_clauses = [*clauses, "tr.status = 'Pending'", "tr.scheduled_to < CURDATE()"]
 	overdue_rows = frappe.db.sql(
 		# Clinic Test Request has no full_name column, so pre-employment rows fall
 		# back to the national ID they were registered with.
@@ -2978,7 +2980,7 @@ def test_result_people():
 			"MAX(ctr.creation) AS received "
 			"FROM `tabClinic Test Result` ctr"
 			+ joins
-			+ _where([*list(clauses), "ctr.employee IS NOT NULL", "ctr.employee != ''"])
+			+ _where([*clauses, "ctr.employee IS NOT NULL", "ctr.employee != ''"])
 			+ " GROUP BY ctr.employee ORDER BY employee_name ASC LIMIT 500",
 			params,
 			as_dict=True,
@@ -3348,7 +3350,8 @@ def clinic_overview_report():
 	section it comes from, so the overview never shows more than they could
 	see section by section."""
 	assert_health_report_access("overview")
-	data, year, month_num = _dashboard_request()
+	# The landing page has no filter bar; only the year and month are read.
+	_data, year, month_num = _dashboard_request()
 	year = year or frappe.utils.getdate().year
 	allowed = set(allowed_dashboard_sections())
 
