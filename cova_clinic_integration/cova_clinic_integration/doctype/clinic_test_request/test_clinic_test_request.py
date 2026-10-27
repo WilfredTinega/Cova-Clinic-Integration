@@ -70,3 +70,18 @@ class TestClinicTestRequest(IntegrationTestCase):
 		).insert()
 		self.assertIsNone(doc.employee)
 		self.assertEqual(doc.nationa_id, "12312312")
+
+	def test_second_pre_employment_request_for_a_candidate_is_refused(self):
+		# Pre-employment is locked to one test per candidate.
+		pre = dict(
+			member_type="Pre Employment",
+			nationa_id="45645645",
+			test_package="Pre Employment Wellness",
+		)
+		first = self._base(**pre).insert()
+		with self.assertRaises(frappe.DuplicateEntryError):
+			self._base(**dict(pre, nationa_id=" 45645645 ")).insert()
+
+		# A cancelled request no longer holds the candidate's place.
+		first.db_set("status", "Cancelled")
+		self._base(**pre).insert()

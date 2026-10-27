@@ -20,6 +20,9 @@ import frappe
 from frappe import _
 from frappe.integrations.utils import make_post_request
 
+from cova_clinic_integration.cova_clinic_integration.doctype.clinic_test_request.clinic_test_request import (
+	existing_preemployment_request,
+)
 from cova_clinic_integration.cova_clinic_integration.doctype.cova_clinic_settings.cova_clinic_settings import (
 	DASHBOARD_SECTIONS,
 	DEFAULT_TEST_GROUPS,
@@ -832,20 +835,27 @@ def cova_clinic_api():
 		elif not national_id:
 			resp = {"error": "National ID is required for pre-employment registration."}
 		else:
-			# Step 1: create the tracking Clinic Test Request FIRST (persists even if Cova calls fail)
-			req_doc = frappe.new_doc("Clinic Test Request")
-			req_doc.member_type = "Pre Employment"
-			req_doc.nationa_id = national_id
-			req_doc.full_name = full_name
-			req_doc.date_of_birth = offer.get("date_of_birth")
-			req_doc.gender = gender
-			req_doc.phone_number = phone
-			req_doc.status = "Pending"
-			req_doc.test_package = "Pre Employment Wellness"
-			req_doc.scheduled_from = frappe.utils.nowdate()
-			req_doc.scheduled_to = frappe.utils.add_days(frappe.utils.nowdate(), 15)
-			req_doc.notes = "Pre-employment wellness for Job Offer %s" % offer_name
-			req_doc.insert(ignore_permissions=True)
+			# Step 1: the tracking Clinic Test Request, created FIRST (persists even
+			# if Cova calls fail). Pre-employment is one test per candidate, so a
+			# repeat registration reuses the candidate's request instead of adding
+			# a second one.
+			existing_request = existing_preemployment_request(national_id)
+			if existing_request:
+				req_doc = frappe.get_doc("Clinic Test Request", existing_request)
+			else:
+				req_doc = frappe.new_doc("Clinic Test Request")
+				req_doc.member_type = "Pre Employment"
+				req_doc.nationa_id = national_id
+				req_doc.full_name = full_name
+				req_doc.date_of_birth = offer.get("date_of_birth")
+				req_doc.gender = gender
+				req_doc.phone_number = phone
+				req_doc.status = "Pending"
+				req_doc.test_package = "Pre Employment Wellness"
+				req_doc.scheduled_from = frappe.utils.nowdate()
+				req_doc.scheduled_to = frappe.utils.add_days(frappe.utils.nowdate(), 15)
+				req_doc.notes = "Pre-employment wellness for Job Offer %s" % offer_name
+				req_doc.insert(ignore_permissions=True)
 
 			# Step 2: register to Cova pre-employment scheme (same register endpoint)
 			register_payload = {
@@ -858,29 +868,36 @@ def cova_clinic_api():
 			}
 			register_result = cova_post(base_url + register_endpoint, headers, register_payload)
 
-			# Step 3: submit the single PreEmploymentWellness test (same test endpoint)
-			test_payload = {
-				"requestId": req_doc.name,
-				"memberIdentifier": national_id,
-				"memberType": "PreEmployment",
-				"testPackage": cova_package_code("Pre Employment Wellness"),
-				"scheduledWindow": {"from": str(req_doc.scheduled_from), "to": str(req_doc.scheduled_to)},
-				"candidateBiodata": {
-					"fullName": full_name,
-					"nationalId": national_id,
-					"dateOfBirth": date_of_birth,
-					"gender": gender,
-					"phone": phone,
-				},
-				"notes": req_doc.notes,
-			}
-			test_result = cova_post(
-				base_url + test_request_endpoint,
-				headers,
-				test_payload,
-				trace=("Clinic Test Request", req_doc.name, "submit_test_request"),
-			)
-			mark_test_request_sent(req_doc.name, test_result)
+			# Step 3: submit the single PreEmploymentWellness test (same test
+			# endpoint). A request COVA already holds is not sent again.
+			if req_doc.received_by_cova:
+				test_result = {"skipped": "already received by COVA", "request": req_doc.name}
+			else:
+				test_payload = {
+					"requestId": req_doc.name,
+					"memberIdentifier": national_id,
+					"memberType": "PreEmployment",
+					"testPackage": cova_package_code(req_doc.test_package),
+					"scheduledWindow": {
+						"from": str(req_doc.scheduled_from),
+						"to": str(req_doc.scheduled_to),
+					},
+					"candidateBiodata": {
+						"fullName": full_name,
+						"nationalId": national_id,
+						"dateOfBirth": date_of_birth,
+						"gender": gender,
+						"phone": phone,
+					},
+					"notes": req_doc.notes,
+				}
+				test_result = cova_post(
+					base_url + test_request_endpoint,
+					headers,
+					test_payload,
+					trace=("Clinic Test Request", req_doc.name, "submit_test_request"),
+				)
+				mark_test_request_sent(req_doc.name, test_result)
 
 			# Step 4: create Cova Member and store COVA's registration response on it.
 			#
@@ -995,6 +1012,8 @@ def cova_clinic_api():
 		request_id = data.get("requestId")
 		test_package = data.get("testPackage")
 		clinical_outcome = data.get("clinicalOutcome")
+		# Why the clinic reached that outcome — the outcome alone does not say.
+		outcome_reason = data.get("outcomeReason") or data.get("reason")
 
 		request_exists = frappe.db.exists("Clinic Test Request", request_id)
 
@@ -1033,7 +1052,18 @@ def cova_clinic_api():
 			result_doc.request_id = request_id
 			result_doc.test_package = test_package
 			result_doc.clinical_outcome = clinical_outcome
-			result_doc.append("results", {"test": mc_name, "select_tezd": risk})
+			result_doc.outcome_reason = outcome_reason
+			# The row carries COVA's own outcome and reason; the risk band is kept
+			# for the dashboard's risk breakdown but no longer shown in the table.
+			result_doc.append(
+				"results",
+				{
+					"test": mc_name,
+					"outcome": clinical_outcome if clinical_outcome in outcome_risk_map else None,
+					"reason": outcome_reason,
+					"select_tezd": risk,
+				},
+			)
 			result_doc.insert(ignore_permissions=True)
 			record_cova_message(
 				"Clinic Test Result", result_doc.name, "receive_test_result", "received", data

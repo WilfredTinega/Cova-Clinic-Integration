@@ -153,3 +153,72 @@ class TestClinicCheckin(IntegrationTestCase):
 		doc.reason = "recheck (edited)"
 		doc.save(ignore_permissions=True)
 		self.assertEqual(doc.leave_application, before)
+
+	def _mark(self, employee, date, status):
+		attendance = frappe.get_doc(
+			{
+				"doctype": "Attendance",
+				"employee": employee,
+				"attendance_date": date,
+				"status": status,
+				"company": frappe.db.get_value("Employee", employee, "company"),
+			}
+		)
+		attendance.flags.ignore_permissions = True
+		attendance.insert()
+		attendance.submit()
+		return attendance.name
+
+	def _status_on(self, employee, date):
+		return frappe.db.get_value(
+			"Attendance", {"employee": employee, "attendance_date": date, "docstatus": 1}, "status"
+		)
+
+	def test_backdated_sick_off_overrides_present_and_absent(self):
+		# A backdated sick off lands on days that are already marked: Present
+		# where the employee clocked in before going to the clinic (HRMS rejects
+		# leave over those, which used to lose the whole window) and Absent for
+		# the rest. The sick off wins: both are cancelled and every day goes on
+		# leave.
+		employee = make_employee("CV-TEST-9018")
+		if not ensure_sick_leave_prerequisites(employee, "2026-06-08"):
+			self.skipTest("this site will not allow the sick-leave prerequisites to be built")
+
+		present = self._mark(employee, "2026-06-08", "Present")
+		absent = self._mark(employee, "2026-06-09", "Absent")
+
+		doc = self._checkin(
+			employee=employee, start_date="2026-06-08", end_date="2026-06-10", reason="backdated"
+		)
+		self.assertIsNotNone(
+			doc.leave_application,
+			"no Leave Application was created. Controller reported:\n" + _last_sick_leave_error(),
+		)
+		leave = frappe.get_doc("Leave Application", doc.leave_application)
+		self.assertEqual(str(leave.from_date), "2026-06-08")
+		self.assertEqual(str(leave.to_date), "2026-06-10")
+		self.assertEqual(frappe.db.get_value("Attendance", present, "docstatus"), 2)
+		self.assertEqual(frappe.db.get_value("Attendance", absent, "docstatus"), 2)
+		for date in ("2026-06-08", "2026-06-09", "2026-06-10"):
+			self.assertEqual(self._status_on(employee, date), "On Leave", date)
+
+	def test_dates_added_on_save_override_attendance(self):
+		# The window can arrive on a later save rather than the insert.
+		employee = make_employee("CV-TEST-9019")
+		if not ensure_sick_leave_prerequisites(employee, "2026-06-15"):
+			self.skipTest("this site will not allow the sick-leave prerequisites to be built")
+
+		present = self._mark(employee, "2026-06-15", "Present")
+		doc = self._checkin(employee=employee, reason="walk-in")
+		self.assertIsNone(doc.leave_application)
+
+		doc.start_date = "2026-06-15"
+		doc.end_date = "2026-06-16"
+		doc.save(ignore_permissions=True)
+		doc.reload()
+		self.assertIsNotNone(
+			doc.leave_application,
+			"no Leave Application was created. Controller reported:\n" + _last_sick_leave_error(),
+		)
+		self.assertEqual(frappe.db.get_value("Attendance", present, "docstatus"), 2)
+		self.assertEqual(self._status_on(employee, "2026-06-15"), "On Leave")

@@ -156,6 +156,23 @@ class TestCovaClinicApi(IntegrationTestCase):
 		result = frappe.get_doc("Clinic Test Result", resp["result"])
 		self.assertEqual(result.results[0].select_tezd, "Low Risk")
 		self.assertEqual(result.results[0].test, "Annual Medical")
+		self.assertEqual(result.results[0].outcome, "FitForWork")
+
+	def test_receive_test_result_keeps_the_reason(self):
+		req = self._request()
+		resp = self._call(
+			{
+				"action": "receive_test_result",
+				"requestId": req.name,
+				"testPackage": "Annual Medical",
+				"clinicalOutcome": "FitWithRestrictions",
+				"outcomeReason": "Elevated blood pressure; no heavy lifting",
+			}
+		)
+		result = frappe.get_doc("Clinic Test Result", resp["result"])
+		self.assertEqual(result.outcome_reason, "Elevated blood pressure; no heavy lifting")
+		self.assertEqual(result.results[0].outcome, "FitWithRestrictions")
+		self.assertEqual(result.results[0].reason, "Elevated blood pressure; no heavy lifting")
 
 	def test_outcome_risk_map(self):
 		expected = {
@@ -1510,6 +1527,48 @@ class TestCovaPostFailures(IntegrationTestCase):
 		# refusal and the candidate is not silently lost.
 		self.assertTrue(frappe.db.exists("Clinic Test Request", resp["test_request"]))
 		self.assertEqual(resp["registration"]["error"], "dateOfBirth is required")
+
+	def test_preemployment_registration_twice_reuses_the_request(self):
+		# Registering the same candidate again (a second click, a re-registered
+		# offer) used to add a second Clinic Test Request each time.
+		applicant = frappe.get_doc(
+			{
+				"doctype": "Job Applicant",
+				"applicant_name": "Repeat Candidate",
+				"email_id": "repeat.candidate@example.com",
+				"phone_number": "0700111223",
+				"status": "Open",
+			}
+		).insert(ignore_permissions=True)
+		offer = frappe.get_doc(
+			{
+				"doctype": "Job Offer",
+				"job_applicant": applicant.name,
+				"status": "Awaiting Response",
+				"offer_date": frappe.utils.nowdate(),
+				"designation": frappe.db.get_value("Designation", {}, "name"),
+				"company": frappe.db.get_value("Employee", self.employee, "company"),
+				"national_id": "CV-POST-NID-2",
+				"phone_number": "0700111223",
+			}
+		).insert(ignore_permissions=True)
+
+		accepted = {"status": "success", "covaMemberId": "CHSC00099001"}
+		with patch.object(api, "make_post_request", return_value=accepted) as post:
+			first = self._call({"action": "register_preemployment_candidate", "job_offer": offer.name})
+			sent = post.call_count
+			second = self._call({"action": "register_preemployment_candidate", "job_offer": offer.name})
+
+		self.assertEqual(first["test_request"], second["test_request"])
+		self.assertEqual(
+			frappe.db.count(
+				"Clinic Test Request",
+				{"member_type": "Pre Employment", "nationa_id": "CV-POST-NID-2"},
+			),
+			1,
+		)
+		# COVA already holds the request, so only the registration goes out again.
+		self.assertEqual(post.call_count - sent, 1)
 
 
 class TestOnboarding(IntegrationTestCase):

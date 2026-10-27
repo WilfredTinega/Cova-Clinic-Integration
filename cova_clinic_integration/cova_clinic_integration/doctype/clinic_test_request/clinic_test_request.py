@@ -42,6 +42,25 @@ class ClinicTestRequest(Document):
 		# Keeps the member's Connections tab complete — see member_link.
 		set_cova_member(self)
 		self.set_payroll_number()
+		self.validate_single_preemployment_request()
+
+	def validate_single_preemployment_request(self):
+		"""Pre-employment is locked to one test, so a candidate gets one request.
+
+		Re-registering a Job Offer, or raising one by hand, used to add a second
+		request for the same National ID. A cancelled request does not count.
+		"""
+		if self.member_type != "Pre Employment" or not self.nationa_id:
+			return
+		self.nationa_id = self.nationa_id.strip()
+		existing = existing_preemployment_request(self.nationa_id, exclude=self.name)
+		if existing:
+			frappe.throw(
+				frappe._("A pre-employment test request already exists for National ID {0}: {1}").format(
+					frappe.bold(self.nationa_id), frappe.utils.get_link_to_form(self.doctype, existing)
+				),
+				frappe.DuplicateEntryError,
+			)
 
 	def set_payroll_number(self):
 		"""Make sure an Active request carries the identifier COVA knows.
@@ -65,3 +84,20 @@ class ClinicTestRequest(Document):
 		from cova_clinic_integration.api import employee_payroll_id
 
 		self.payroll_number = employee_payroll_id(frappe.get_doc("Employee", self.employee))
+
+
+def existing_preemployment_request(national_id, exclude=None) -> str | None:
+	"""The candidate's live (not cancelled) pre-employment request, if any."""
+	if not national_id:
+		return None
+	filters = {
+		"member_type": "Pre Employment",
+		"nationa_id": national_id.strip(),
+		"status": ["!=", "Cancelled"],
+	}
+	if exclude:
+		filters["name"] = ["!=", exclude]
+	rows = frappe.get_all(
+		"Clinic Test Request", filters=filters, pluck="name", order_by="creation asc", limit=1
+	)
+	return rows[0] if rows else None

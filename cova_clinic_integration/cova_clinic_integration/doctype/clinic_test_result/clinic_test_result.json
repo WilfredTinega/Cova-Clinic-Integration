@@ -22,6 +22,8 @@
   "test_package",
   "column_break_tlwe",
   "request_id",
+  "section_break_reason",
+  "outcome_reason",
   "section_break_hpjg",
   "results",
   "data_tab",
@@ -52,11 +54,11 @@
    "options": "Employee"
   },
   {
+   "description": "Filled in automatically; links this record back to the member's Cova record.",
    "fieldname": "cova_member",
    "fieldtype": "Link",
    "label": "Cova Member",
-   "options": "Cova Members",
-   "description": "Filled in automatically; links this record back to the member's Cova record."
+   "options": "Cova Members"
   },
   {
    "fieldname": "column_break_eibz",
@@ -125,6 +127,15 @@
    "options": "Clinic Test Request"
   },
   {
+   "fieldname": "section_break_reason",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "outcome_reason",
+   "fieldtype": "Small Text",
+   "label": "Outcome Reason"
+  },
+  {
    "fieldname": "section_break_hpjg",
    "fieldtype": "Section Break"
   },
@@ -157,7 +168,7 @@
    "link_fieldname": "linked_test_result"
   }
  ],
- "modified": "2026-07-30 12:18:55.430750",
+ "modified": "2026-10-27 18:00:00.000000",
  "modified_by": "Administrator",
  "module": "Cova Clinic Integration",
  "name": "Clinic Test Result",

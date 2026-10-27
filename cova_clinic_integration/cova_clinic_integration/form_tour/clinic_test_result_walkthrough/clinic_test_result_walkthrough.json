@@ -154,7 +154,7 @@
    "ui_tour": 0
   },
   {
-   "description": "One row per condition, each with a risk band. The outcome above maps onto it: <code>FitForWork</code> \u2192 <b>Low Risk</b>, <code>FitWithRestrictions</code> and <code>InconclusiveRetestRequired</code> \u2192 <b>Medium Risk</b>, <code>UnfitForWork</code> \u2192 <b>High Risk</b>.<br><br>Add a row to see it \u2014 the condition comes from the Medical Case catalogue.",
+   "description": "One row per condition, with COVA's clinical outcome and the reason it gave.<br><br>Add a row to see it \u2014 the condition comes from the Medical Case catalogue.",
    "fieldname": "results",
    "fieldtype": "Table",
    "has_next_condition": 0,
@@ -171,7 +171,7 @@
    "ui_tour": 0
   },
   {
-   "description": "COVA's untouched payload, for when a risk band is questioned.",
+   "description": "COVA's untouched payload, for when an outcome is questioned.",
    "fieldname": "cova_raw",
    "fieldtype": "Long Text",
    "has_next_condition": 0,
