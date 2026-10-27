@@ -10,6 +10,7 @@ exercised here because they POST to the COVA API; use the Node-RED harness for
 those so the payload can be inspected on the wire.
 """
 
+import json
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -1612,11 +1613,16 @@ class TestOnboarding(IntegrationTestCase):
 	NOT_ONBOARDED: ClassVar[set] = {"Cova Clinic Settings", "Gate Pass"}
 
 	def test_every_sidebar_doctype_has_a_step(self):
-		sidebar = frappe.get_doc("Workspace Sidebar", "Cova Clinic")
+		# Read the sidebar the app ships rather than the site's row: newer v16
+		# frappe no longer imports app-level workspace_sidebar files, so the row
+		# is missing on a fresh site while the file is still the source of truth.
+		path = frappe.get_app_path("cova_clinic_integration", "workspace_sidebar", "cova_clinic.json")
+		with open(path) as f:
+			sidebar = json.load(f)
 		linked = {
-			item.link_to
-			for item in sidebar.items
-			if item.link_type == "DocType" and item.link_to not in self.NOT_ONBOARDED
+			item["link_to"]
+			for item in sidebar["items"]
+			if item.get("link_type") == "DocType" and item["link_to"] not in self.NOT_ONBOARDED
 		}
 
 		covered = set()
