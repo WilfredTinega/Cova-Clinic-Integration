@@ -1075,18 +1075,21 @@ class TestClinicReportXlsx(IntegrationTestCase):
 
 class TestGetClinicData(IntegrationTestCase):
 	"""The ``getClinicData`` override: GET reads sick-off rows by creation date,
-	POST writes a Clinic Checkin. Unlike the live Server Script it needs only
-	``employee`` and does not block duplicates."""
+	POST writes a Clinic Checkin for every post whose employee matches; anything
+	else that cannot be used is left off the record and reported in ``warnings``."""
 
 	def setUp(self):
 		self.employee = make_employee("CV-API-8002", "Clinic Data")
+		self.created = []
 
 	def tearDown(self):
 		# get_clinic_data's POST branch calls frappe.db.commit() itself, so the
 		# usual rollback does not undo the check-ins these tests create — they
 		# have to be deleted explicitly or they accumulate on the site.
-		for name in frappe.get_all("Clinic Checkin", filters={"employee": self.employee}, pluck="name"):
-			frappe.delete_doc("Clinic Checkin", name, force=True, ignore_permissions=True)
+		mine = frappe.get_all("Clinic Checkin", filters={"employee": self.employee}, pluck="name")
+		for name in set(mine) | set(self.created):
+			if frappe.db.exists("Clinic Checkin", name):
+				frappe.delete_doc("Clinic Checkin", name, force=True, ignore_permissions=True)
 		frappe.db.commit()
 		frappe.db.rollback()
 
@@ -1123,6 +1126,12 @@ class TestGetClinicData(IntegrationTestCase):
 		# no dates -> no Leave Application
 		self.assertIsNone(response.data["leave_application"])
 
+	def _saved(self, response):
+		self.created.append(response.data["id"])
+		self.assertEqual(response.status, "success")
+		self.assertEqual(response.http_status_code, 201)
+		return frappe.get_doc("Clinic Checkin", response.data["id"])
+
 	def test_post_requires_an_employee(self):
 		with stub_request(json_body={"reason": "nobody"}) as response:
 			api.get_clinic_data()
@@ -1130,18 +1139,28 @@ class TestGetClinicData(IntegrationTestCase):
 		self.assertIn("Missing required field", response.message)
 
 	def test_post_rejects_an_unknown_employee(self):
-		with stub_request(json_body={"employee": "CV-API-NOPE"}) as response:
+		before = frappe.db.count("Clinic Checkin")
+		with stub_request(json_body={"employee": "DS 83726"}) as response:
 			api.get_clinic_data()
 		self.assertEqual(response.status, "error")
 		self.assertIn("does not exist", response.message)
+		self.assertEqual(frappe.db.count("Clinic Checkin"), before)
 
-	def test_post_rejects_a_reversed_range(self):
+	def test_post_resolves_the_employee_by_device_id(self):
+		frappe.db.set_value("Employee", self.employee, "attendance_device_id", "DEV-8002")
+		with stub_request(json_body={"employee": "DEV-8002"}) as response:
+			api.get_clinic_data()
+		self.assertEqual(self._saved(response).employee, self.employee)
+		self.assertEqual(response.warnings, [])
+
+	def test_post_with_a_reversed_range_is_saved_without_it(self):
 		with stub_request(
 			json_body={"employee": self.employee, "start_date": "2026-08-31", "end_date": "2026-08-01"}
 		) as response:
 			api.get_clinic_data()
-		self.assertEqual(response.status, "error")
-		self.assertIn("cannot be before", response.message)
+		doc = self._saved(response)
+		self.assertIsNone(doc.start_date)
+		self.assertIn("before start date", response.warnings[0])
 
 	def test_post_records_an_external_facility(self):
 		body = {"employee": self.employee, "facility": "Naivasha Sub-County Hospital", "sick_off_given": 3}
@@ -1161,23 +1180,24 @@ class TestGetClinicData(IntegrationTestCase):
 		self.assertEqual(mine[0]["facility"], "Naivasha Sub-County Hospital")
 		self.assertEqual(mine[0]["sick_off_given"], 3)
 
-	def test_post_external_requires_a_facility(self):
+	def test_post_external_without_a_facility_is_still_saved(self):
 		with stub_request(json_body={"employee": self.employee, "is_external": 1}) as response:
 			api.get_clinic_data()
-		self.assertEqual(response.status, "error")
-		self.assertIn("facility", response.message)
+		doc = self._saved(response)
+		self.assertEqual(doc.is_external, 1)
+		self.assertIn("without a facility", response.warnings[0])
 
-	def test_post_rejects_negative_sick_off(self):
+	def test_post_with_negative_sick_off_is_saved_as_zero(self):
 		body = {"employee": self.employee, "facility": "Elsewhere", "sick_off_given": -1}
 		with stub_request(json_body=body) as response:
 			api.get_clinic_data()
-		self.assertEqual(response.status, "error")
-		self.assertIn("negative", response.message)
+		self.assertEqual(self._saved(response).sick_off_given, 0)
+		self.assertIn("negative", response.warnings[0])
 
-	def test_post_requires_json(self):
-		with self.assertRaises(frappe.ValidationError):
-			with stub_request(json_body={"employee": self.employee}, content_type="text/plain"):
-				api.get_clinic_data()
+	def test_post_without_a_json_content_type_is_still_read(self):
+		with stub_request(json_body={"employee": self.employee}, content_type="text/plain") as response:
+			api.get_clinic_data()
+		self.assertEqual(self._saved(response).employee, self.employee)
 
 	def test_post_allows_duplicates(self):
 		body = {"employee": self.employee, "start_date": "2026-08-05", "end_date": "2026-08-05"}

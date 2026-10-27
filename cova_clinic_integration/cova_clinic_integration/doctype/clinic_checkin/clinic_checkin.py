@@ -53,7 +53,7 @@ class ClinicCheckin(Document):
 			self.facility = None
 			self.sick_off_given = 0
 			return
-		if not (self.facility or "").strip():
+		if not (self.facility or "").strip() and not self.flags.from_clinic_post:
 			frappe.throw(frappe._("Facility is required for an external clinic check-in."))
 		if (self.sick_off_given or 0) < 0:
 			frappe.throw(frappe._("Sick Off Given cannot be negative."))
