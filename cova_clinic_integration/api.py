@@ -20,6 +20,9 @@ import frappe
 from frappe import _
 from frappe.integrations.utils import make_post_request
 
+from cova_clinic_integration.cova_clinic_integration.doctype.clinic_test_request.clinic_test_request import (
+	existing_preemployment_request,
+)
 from cova_clinic_integration.cova_clinic_integration.doctype.cova_clinic_settings.cova_clinic_settings import (
 	DASHBOARD_SECTIONS,
 	DEFAULT_TEST_GROUPS,
@@ -832,20 +835,27 @@ def cova_clinic_api():
 		elif not national_id:
 			resp = {"error": "National ID is required for pre-employment registration."}
 		else:
-			# Step 1: create the tracking Clinic Test Request FIRST (persists even if Cova calls fail)
-			req_doc = frappe.new_doc("Clinic Test Request")
-			req_doc.member_type = "Pre Employment"
-			req_doc.nationa_id = national_id
-			req_doc.full_name = full_name
-			req_doc.date_of_birth = offer.get("date_of_birth")
-			req_doc.gender = gender
-			req_doc.phone_number = phone
-			req_doc.status = "Pending"
-			req_doc.test_package = "Pre Employment Wellness"
-			req_doc.scheduled_from = frappe.utils.nowdate()
-			req_doc.scheduled_to = frappe.utils.add_days(frappe.utils.nowdate(), 15)
-			req_doc.notes = "Pre-employment wellness for Job Offer %s" % offer_name
-			req_doc.insert(ignore_permissions=True)
+			# Step 1: the tracking Clinic Test Request, created FIRST (persists even
+			# if Cova calls fail). Pre-employment is one test per candidate, so a
+			# repeat registration reuses the candidate's request instead of adding
+			# a second one.
+			existing_request = existing_preemployment_request(national_id)
+			if existing_request:
+				req_doc = frappe.get_doc("Clinic Test Request", existing_request)
+			else:
+				req_doc = frappe.new_doc("Clinic Test Request")
+				req_doc.member_type = "Pre Employment"
+				req_doc.nationa_id = national_id
+				req_doc.full_name = full_name
+				req_doc.date_of_birth = offer.get("date_of_birth")
+				req_doc.gender = gender
+				req_doc.phone_number = phone
+				req_doc.status = "Pending"
+				req_doc.test_package = "Pre Employment Wellness"
+				req_doc.scheduled_from = frappe.utils.nowdate()
+				req_doc.scheduled_to = frappe.utils.add_days(frappe.utils.nowdate(), 15)
+				req_doc.notes = "Pre-employment wellness for Job Offer %s" % offer_name
+				req_doc.insert(ignore_permissions=True)
 
 			# Step 2: register to Cova pre-employment scheme (same register endpoint)
 			register_payload = {
@@ -858,29 +868,36 @@ def cova_clinic_api():
 			}
 			register_result = cova_post(base_url + register_endpoint, headers, register_payload)
 
-			# Step 3: submit the single PreEmploymentWellness test (same test endpoint)
-			test_payload = {
-				"requestId": req_doc.name,
-				"memberIdentifier": national_id,
-				"memberType": "PreEmployment",
-				"testPackage": cova_package_code("Pre Employment Wellness"),
-				"scheduledWindow": {"from": str(req_doc.scheduled_from), "to": str(req_doc.scheduled_to)},
-				"candidateBiodata": {
-					"fullName": full_name,
-					"nationalId": national_id,
-					"dateOfBirth": date_of_birth,
-					"gender": gender,
-					"phone": phone,
-				},
-				"notes": req_doc.notes,
-			}
-			test_result = cova_post(
-				base_url + test_request_endpoint,
-				headers,
-				test_payload,
-				trace=("Clinic Test Request", req_doc.name, "submit_test_request"),
-			)
-			mark_test_request_sent(req_doc.name, test_result)
+			# Step 3: submit the single PreEmploymentWellness test (same test
+			# endpoint). A request COVA already holds is not sent again.
+			if req_doc.received_by_cova:
+				test_result = {"skipped": "already received by COVA", "request": req_doc.name}
+			else:
+				test_payload = {
+					"requestId": req_doc.name,
+					"memberIdentifier": national_id,
+					"memberType": "PreEmployment",
+					"testPackage": cova_package_code(req_doc.test_package),
+					"scheduledWindow": {
+						"from": str(req_doc.scheduled_from),
+						"to": str(req_doc.scheduled_to),
+					},
+					"candidateBiodata": {
+						"fullName": full_name,
+						"nationalId": national_id,
+						"dateOfBirth": date_of_birth,
+						"gender": gender,
+						"phone": phone,
+					},
+					"notes": req_doc.notes,
+				}
+				test_result = cova_post(
+					base_url + test_request_endpoint,
+					headers,
+					test_payload,
+					trace=("Clinic Test Request", req_doc.name, "submit_test_request"),
+				)
+				mark_test_request_sent(req_doc.name, test_result)
 
 			# Step 4: create Cova Member and store COVA's registration response on it.
 			#
@@ -995,6 +1012,8 @@ def cova_clinic_api():
 		request_id = data.get("requestId")
 		test_package = data.get("testPackage")
 		clinical_outcome = data.get("clinicalOutcome")
+		# Why the clinic reached that outcome — the outcome alone does not say.
+		outcome_reason = data.get("outcomeReason") or data.get("reason")
 
 		request_exists = frappe.db.exists("Clinic Test Request", request_id)
 
@@ -1033,7 +1052,18 @@ def cova_clinic_api():
 			result_doc.request_id = request_id
 			result_doc.test_package = test_package
 			result_doc.clinical_outcome = clinical_outcome
-			result_doc.append("results", {"test": mc_name, "select_tezd": risk})
+			result_doc.outcome_reason = outcome_reason
+			# The row carries COVA's own outcome and reason; the risk band is kept
+			# for the dashboard's risk breakdown but no longer shown in the table.
+			result_doc.append(
+				"results",
+				{
+					"test": mc_name,
+					"outcome": clinical_outcome if clinical_outcome in outcome_risk_map else None,
+					"reason": outcome_reason,
+					"select_tezd": risk,
+				},
+			)
 			result_doc.insert(ignore_permissions=True)
 			record_cova_message(
 				"Clinic Test Result", result_doc.name, "receive_test_result", "received", data
@@ -3178,6 +3208,82 @@ def clinic_test_result_report():
 # `facility` alone implies `is_external`.
 
 
+def resolve_posted_employee(raw) -> str | None:
+	"""The Employee a clinic post names, by whichever ID the clinic sent."""
+	raw = str(raw or "").strip()
+	if not raw:
+		return None
+	found = employee_from_payroll(raw)
+	if found:
+		return found
+	for field in ("attendance_device_id", "national_id", "custom_previous_payroll_no"):
+		if frappe.db.has_column("Employee", field):
+			found = frappe.db.get_value("Employee", {field: raw}, "name")
+			if found:
+				return found
+	return None
+
+
+def _clinic_checkin_from_post(data, employee, warnings):
+	"""Build (not insert) the Clinic Checkin a clinic post describes.
+
+	Nothing here refuses the post: whatever cannot be used is left off the
+	record and explained in ``warnings``.
+	"""
+	start_date, end_date = data.get("start_date") or None, data.get("end_date") or None
+	try:
+		start_date = frappe.utils.getdate(start_date) if start_date else None
+		end_date = frappe.utils.getdate(end_date) if end_date else None
+	except Exception:
+		warnings.append(
+			"Invalid sick-off dates ({0} to {1}); saved without them.".format(
+				data.get("start_date"), data.get("end_date")
+			)
+		)
+		start_date = end_date = None
+	if start_date and end_date and end_date < start_date:
+		warnings.append(
+			"End date ({0}) is before start date ({1}); saved without the sick-off window.".format(
+				end_date, start_date
+			)
+		)
+		start_date = end_date = None
+	elif bool(start_date) != bool(end_date):
+		warnings.append("Only one sick-off date was sent; no sick leave was created.")
+
+	facility = (data.get("facility") or "").strip() or None
+	is_external = 1 if (frappe.utils.cint(data.get("is_external")) or facility) else 0
+	sick_off_given = 0
+	if is_external and data.get("sick_off_given") not in (None, ""):
+		try:
+			sick_off_given = int(data.get("sick_off_given"))
+		except (TypeError, ValueError):
+			warnings.append("'sick_off_given' is not a whole number; saved as 0.")
+		if sick_off_given < 0:
+			warnings.append("'sick_off_given' is negative; saved as 0.")
+			sick_off_given = 0
+	if is_external and not facility:
+		warnings.append("External sick off without a facility.")
+
+	doc = frappe.get_doc(
+		{
+			"doctype": "Clinic Checkin",
+			"employee": employee,
+			"start_date": start_date,
+			"end_date": end_date,
+			"reason": data.get("reason"),
+			"time_in": data.get("time_in"),
+			"time_out": data.get("time_out"),
+			"is_external": is_external,
+			"facility": facility if is_external else None,
+			"sick_off_given": sick_off_given,
+		}
+	)
+	# A clinic post is saved even without a facility; the desk form still asks for one.
+	doc.flags.from_clinic_post = True
+	return doc
+
+
 @frappe.whitelist()
 def get_clinic_data():
 	method = frappe.request.method
@@ -3235,95 +3341,74 @@ def get_clinic_data():
 			)
 			frappe.response.http_status_code = 500
 
-	# ── POST: create a Clinic Checkin record (no dedup blockage) ──
+	# ── POST: create a Clinic Checkin record ──
+	# The employee must match an Employee — that is the one thing a post is
+	# refused for, and the refusal keeps the whole post in the Error Log so it
+	# can be re-sent. Everything else (dates, facility, sick-off days) never
+	# costs the check-in: what cannot be used is left off the record and
+	# reported back as `warnings`.
 	elif method == "POST":
-		if not frappe.request.content_type or "application/json" not in frappe.request.content_type:
-			frappe.throw("Request must be JSON with Content-Type: application/json")
+		data = frappe.request.get_json(force=True, silent=True) or {}
+		posted_id = str(data.get("employee") or "").strip()
+		employee = resolve_posted_employee(posted_id)
+		if not employee:
+			message = (
+				"Missing required field: 'employee'"
+				if not posted_id
+				else "Employee '{0}' does not exist. Please provide a valid Employee ID.".format(posted_id)
+			)
+			frappe.log_error(
+				title="Clinic Data API POST Error",
+				message=message + "\n\n" + json.dumps(data, indent=2, default=str),
+			)
+			frappe.response.update({"status": "error", "message": message})
+			frappe.response.http_status_code = 404 if posted_id else 400
+			return
+
+		warnings = []
 		try:
-			data = frappe.request.get_json() or {}
-
-			employee_id = data.get("employee")
-			if not employee_id:
-				frappe.throw("Missing required field: 'employee'")
-			if not frappe.db.exists("Employee", employee_id):
-				frappe.throw(
-					"Employee '{0}' does not exist. Please provide a valid Employee ID.".format(employee_id)
-				)
-
-			# start_date / end_date are OPTIONAL. A payload without both dates creates
-			# a plain check-in record and does NOT trigger a Leave Application (the
-			# controller's after_insert guards on both dates being present). Validate
-			# the window only when both are supplied.
-			start_date = data.get("start_date")
-			end_date = data.get("end_date")
-			if start_date and end_date:
-				try:
-					start_date = frappe.utils.getdate(start_date)
-					end_date = frappe.utils.getdate(end_date)
-					if end_date < start_date:
-						frappe.throw(
-							"End date ({0}) cannot be before start date ({1})".format(end_date, start_date)
-						)
-				except Exception as date_error:
-					frappe.throw("Invalid date format: {0}".format(str(date_error)))
-
-			facility = (data.get("facility") or "").strip() or None
-			is_external = 1 if (frappe.utils.cint(data.get("is_external")) or facility) else 0
-			sick_off_given = data.get("sick_off_given")
-			if is_external:
-				if not facility:
-					frappe.throw("Missing required field: 'facility' (required when 'is_external' is set)")
-				if sick_off_given not in (None, ""):
-					try:
-						sick_off_given = int(sick_off_given)
-					except (TypeError, ValueError):
-						frappe.throw("'sick_off_given' must be a whole number of days")
-					if sick_off_given < 0:
-						frappe.throw("'sick_off_given' cannot be negative")
-
-			# Always insert — inserts and saves are allowed without dedup blockage.
+			doc = _clinic_checkin_from_post(data, employee, warnings)
+			doc.insert(ignore_permissions=True)
+		except Exception:
+			# Last resort: keep the check-in for the matched employee with what
+			# arrived, so the sick off is not lost; the payload goes on cova_raw.
+			frappe.db.rollback()
+			frappe.log_error(title="Clinic Data API POST Error", message=frappe.get_traceback())
+			warnings.append("Saved unprocessed: {0}".format(frappe.get_traceback().strip().splitlines()[-1]))
 			doc = frappe.get_doc(
-				{
-					"doctype": "Clinic Checkin",
-					"employee": employee_id,
-					"start_date": start_date or None,
-					"end_date": end_date or None,
-					"reason": data.get("reason"),
-					"time_in": data.get("time_in"),
-					"time_out": data.get("time_out"),
-					"is_external": is_external,
-					"facility": facility if is_external else None,
-					"sick_off_given": (sick_off_given or 0) if is_external else 0,
-				}
-			).insert(ignore_permissions=True)
-
-			record_cova_message("Clinic Checkin", doc.name, "clinic_data_post", "received", data)
-
-			frappe.response.pop("docs", None)
-			frappe.db.commit()
-
-			frappe.response.update(
-				{
-					"status": "success",
-					"message": "Clinic data saved successfully",
-					"data": {
-						"id": doc.name,
-						"employee": doc.employee,
-						"leave_application": doc.leave_application,
-						"is_external": doc.is_external,
-						"facility": doc.facility,
-						"sick_off_given": doc.sick_off_given,
-					},
-				}
+				{"doctype": "Clinic Checkin", "employee": employee, "reason": data.get("reason")}
 			)
-			frappe.response.http_status_code = 201
+			doc.flags.ignore_validate = True
+			doc.insert(ignore_permissions=True)
 
-		except Exception as e:
-			frappe.log_error(title="Clinic Data API POST Error", message=str(e))
-			frappe.response.update(
-				{"status": "error", "message": "Failed to process request: {0}".format(str(e))}
-			)
-			frappe.response.http_status_code = 500
+		record_cova_message(
+			"Clinic Checkin",
+			doc.name,
+			"clinic_data_post",
+			"received",
+			data,
+			status="warning" if warnings else None,
+		)
+
+		frappe.response.pop("docs", None)
+		frappe.db.commit()
+
+		frappe.response.update(
+			{
+				"status": "success",
+				"message": "Clinic data saved successfully",
+				"warnings": warnings,
+				"data": {
+					"id": doc.name,
+					"employee": doc.employee,
+					"leave_application": frappe.db.get_value("Clinic Checkin", doc.name, "leave_application"),
+					"is_external": doc.is_external,
+					"facility": doc.facility,
+					"sick_off_given": doc.sick_off_given,
+				},
+			}
+		)
+		frappe.response.http_status_code = 201
 
 	else:
 		frappe.response.update(

@@ -23,6 +23,7 @@ class ClinicTestResult(Document):
 		employee: DF.Link | None
 		full_name: DF.Data | None
 		member_type: DF.Literal["", "Active", "Pre Employment"]
+		outcome_reason: DF.SmallText | None
 		payroll_number: DF.Data | None
 		request_id: DF.Link | None
 		results: DF.Table[TestResult]

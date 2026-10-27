@@ -10,6 +10,7 @@ exercised here because they POST to the COVA API; use the Node-RED harness for
 those so the payload can be inspected on the wire.
 """
 
+import json
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -156,6 +157,23 @@ class TestCovaClinicApi(IntegrationTestCase):
 		result = frappe.get_doc("Clinic Test Result", resp["result"])
 		self.assertEqual(result.results[0].select_tezd, "Low Risk")
 		self.assertEqual(result.results[0].test, "Annual Medical")
+		self.assertEqual(result.results[0].outcome, "FitForWork")
+
+	def test_receive_test_result_keeps_the_reason(self):
+		req = self._request()
+		resp = self._call(
+			{
+				"action": "receive_test_result",
+				"requestId": req.name,
+				"testPackage": "Annual Medical",
+				"clinicalOutcome": "FitWithRestrictions",
+				"outcomeReason": "Elevated blood pressure; no heavy lifting",
+			}
+		)
+		result = frappe.get_doc("Clinic Test Result", resp["result"])
+		self.assertEqual(result.outcome_reason, "Elevated blood pressure; no heavy lifting")
+		self.assertEqual(result.results[0].outcome, "FitWithRestrictions")
+		self.assertEqual(result.results[0].reason, "Elevated blood pressure; no heavy lifting")
 
 	def test_outcome_risk_map(self):
 		expected = {
@@ -1058,18 +1076,21 @@ class TestClinicReportXlsx(IntegrationTestCase):
 
 class TestGetClinicData(IntegrationTestCase):
 	"""The ``getClinicData`` override: GET reads sick-off rows by creation date,
-	POST writes a Clinic Checkin. Unlike the live Server Script it needs only
-	``employee`` and does not block duplicates."""
+	POST writes a Clinic Checkin for every post whose employee matches; anything
+	else that cannot be used is left off the record and reported in ``warnings``."""
 
 	def setUp(self):
 		self.employee = make_employee("CV-API-8002", "Clinic Data")
+		self.created = []
 
 	def tearDown(self):
 		# get_clinic_data's POST branch calls frappe.db.commit() itself, so the
 		# usual rollback does not undo the check-ins these tests create — they
 		# have to be deleted explicitly or they accumulate on the site.
-		for name in frappe.get_all("Clinic Checkin", filters={"employee": self.employee}, pluck="name"):
-			frappe.delete_doc("Clinic Checkin", name, force=True, ignore_permissions=True)
+		mine = frappe.get_all("Clinic Checkin", filters={"employee": self.employee}, pluck="name")
+		for name in set(mine) | set(self.created):
+			if frappe.db.exists("Clinic Checkin", name):
+				frappe.delete_doc("Clinic Checkin", name, force=True, ignore_permissions=True)
 		frappe.db.commit()
 		frappe.db.rollback()
 
@@ -1106,6 +1127,12 @@ class TestGetClinicData(IntegrationTestCase):
 		# no dates -> no Leave Application
 		self.assertIsNone(response.data["leave_application"])
 
+	def _saved(self, response):
+		self.created.append(response.data["id"])
+		self.assertEqual(response.status, "success")
+		self.assertEqual(response.http_status_code, 201)
+		return frappe.get_doc("Clinic Checkin", response.data["id"])
+
 	def test_post_requires_an_employee(self):
 		with stub_request(json_body={"reason": "nobody"}) as response:
 			api.get_clinic_data()
@@ -1113,18 +1140,28 @@ class TestGetClinicData(IntegrationTestCase):
 		self.assertIn("Missing required field", response.message)
 
 	def test_post_rejects_an_unknown_employee(self):
-		with stub_request(json_body={"employee": "CV-API-NOPE"}) as response:
+		before = frappe.db.count("Clinic Checkin")
+		with stub_request(json_body={"employee": "DS 83726"}) as response:
 			api.get_clinic_data()
 		self.assertEqual(response.status, "error")
 		self.assertIn("does not exist", response.message)
+		self.assertEqual(frappe.db.count("Clinic Checkin"), before)
 
-	def test_post_rejects_a_reversed_range(self):
+	def test_post_resolves_the_employee_by_device_id(self):
+		frappe.db.set_value("Employee", self.employee, "attendance_device_id", "DEV-8002")
+		with stub_request(json_body={"employee": "DEV-8002"}) as response:
+			api.get_clinic_data()
+		self.assertEqual(self._saved(response).employee, self.employee)
+		self.assertEqual(response.warnings, [])
+
+	def test_post_with_a_reversed_range_is_saved_without_it(self):
 		with stub_request(
 			json_body={"employee": self.employee, "start_date": "2026-08-31", "end_date": "2026-08-01"}
 		) as response:
 			api.get_clinic_data()
-		self.assertEqual(response.status, "error")
-		self.assertIn("cannot be before", response.message)
+		doc = self._saved(response)
+		self.assertIsNone(doc.start_date)
+		self.assertIn("before start date", response.warnings[0])
 
 	def test_post_records_an_external_facility(self):
 		body = {"employee": self.employee, "facility": "Naivasha Sub-County Hospital", "sick_off_given": 3}
@@ -1144,23 +1181,24 @@ class TestGetClinicData(IntegrationTestCase):
 		self.assertEqual(mine[0]["facility"], "Naivasha Sub-County Hospital")
 		self.assertEqual(mine[0]["sick_off_given"], 3)
 
-	def test_post_external_requires_a_facility(self):
+	def test_post_external_without_a_facility_is_still_saved(self):
 		with stub_request(json_body={"employee": self.employee, "is_external": 1}) as response:
 			api.get_clinic_data()
-		self.assertEqual(response.status, "error")
-		self.assertIn("facility", response.message)
+		doc = self._saved(response)
+		self.assertEqual(doc.is_external, 1)
+		self.assertIn("without a facility", response.warnings[0])
 
-	def test_post_rejects_negative_sick_off(self):
+	def test_post_with_negative_sick_off_is_saved_as_zero(self):
 		body = {"employee": self.employee, "facility": "Elsewhere", "sick_off_given": -1}
 		with stub_request(json_body=body) as response:
 			api.get_clinic_data()
-		self.assertEqual(response.status, "error")
-		self.assertIn("negative", response.message)
+		self.assertEqual(self._saved(response).sick_off_given, 0)
+		self.assertIn("negative", response.warnings[0])
 
-	def test_post_requires_json(self):
-		with self.assertRaises(frappe.ValidationError):
-			with stub_request(json_body={"employee": self.employee}, content_type="text/plain"):
-				api.get_clinic_data()
+	def test_post_without_a_json_content_type_is_still_read(self):
+		with stub_request(json_body={"employee": self.employee}, content_type="text/plain") as response:
+			api.get_clinic_data()
+		self.assertEqual(self._saved(response).employee, self.employee)
 
 	def test_post_allows_duplicates(self):
 		body = {"employee": self.employee, "start_date": "2026-08-05", "end_date": "2026-08-05"}
@@ -1511,6 +1549,48 @@ class TestCovaPostFailures(IntegrationTestCase):
 		self.assertTrue(frappe.db.exists("Clinic Test Request", resp["test_request"]))
 		self.assertEqual(resp["registration"]["error"], "dateOfBirth is required")
 
+	def test_preemployment_registration_twice_reuses_the_request(self):
+		# Registering the same candidate again (a second click, a re-registered
+		# offer) used to add a second Clinic Test Request each time.
+		applicant = frappe.get_doc(
+			{
+				"doctype": "Job Applicant",
+				"applicant_name": "Repeat Candidate",
+				"email_id": "repeat.candidate@example.com",
+				"phone_number": "0700111223",
+				"status": "Open",
+			}
+		).insert(ignore_permissions=True)
+		offer = frappe.get_doc(
+			{
+				"doctype": "Job Offer",
+				"job_applicant": applicant.name,
+				"status": "Awaiting Response",
+				"offer_date": frappe.utils.nowdate(),
+				"designation": frappe.db.get_value("Designation", {}, "name"),
+				"company": frappe.db.get_value("Employee", self.employee, "company"),
+				"national_id": "CV-POST-NID-2",
+				"phone_number": "0700111223",
+			}
+		).insert(ignore_permissions=True)
+
+		accepted = {"status": "success", "covaMemberId": "CHSC00099001"}
+		with patch.object(api, "make_post_request", return_value=accepted) as post:
+			first = self._call({"action": "register_preemployment_candidate", "job_offer": offer.name})
+			sent = post.call_count
+			second = self._call({"action": "register_preemployment_candidate", "job_offer": offer.name})
+
+		self.assertEqual(first["test_request"], second["test_request"])
+		self.assertEqual(
+			frappe.db.count(
+				"Clinic Test Request",
+				{"member_type": "Pre Employment", "nationa_id": "CV-POST-NID-2"},
+			),
+			1,
+		)
+		# COVA already holds the request, so only the registration goes out again.
+		self.assertEqual(post.call_count - sent, 1)
+
 
 class TestOnboarding(IntegrationTestCase):
 	"""The Getting Started panel has to cover the sidebar, not a subset of it.
@@ -1533,11 +1613,16 @@ class TestOnboarding(IntegrationTestCase):
 	NOT_ONBOARDED: ClassVar[set] = {"Cova Clinic Settings", "Gate Pass"}
 
 	def test_every_sidebar_doctype_has_a_step(self):
-		sidebar = frappe.get_doc("Workspace Sidebar", "Cova Clinic")
+		# Read the sidebar the app ships rather than the site's row: newer v16
+		# frappe no longer imports app-level workspace_sidebar files, so the row
+		# is missing on a fresh site while the file is still the source of truth.
+		path = frappe.get_app_path("cova_clinic_integration", "workspace_sidebar", "cova_clinic.json")
+		with open(path) as f:
+			sidebar = json.load(f)
 		linked = {
-			item.link_to
-			for item in sidebar.items
-			if item.link_type == "DocType" and item.link_to not in self.NOT_ONBOARDED
+			item["link_to"]
+			for item in sidebar["items"]
+			if item.get("link_type") == "DocType" and item["link_to"] not in self.NOT_ONBOARDED
 		}
 
 		covered = set()
