@@ -222,3 +222,65 @@ class TestClinicCheckin(IntegrationTestCase):
 		)
 		self.assertEqual(frappe.db.get_value("Attendance", present, "docstatus"), 2)
 		self.assertEqual(self._status_on(employee, "2026-06-15"), "On Leave")
+
+	def _logs(self, checkin, since):
+		# Check-in names are reused once a test rolls back, so only this test's rows.
+		return frappe.get_all(
+			"Clinic API Log",
+			filters={
+				"reference_doctype": "Clinic Checkin",
+				"reference_name": checkin,
+				"action": "sick_leave",
+				"creation": [">=", since],
+			},
+			fields=["action", "status", "message"],
+		)
+
+	def test_filed_sick_leave_is_logged(self):
+		employee = make_employee("CV-TEST-9020")
+		if not ensure_sick_leave_prerequisites(employee, "2026-06-22"):
+			self.skipTest("this site will not allow the sick-leave prerequisites to be built")
+		since = frappe.utils.now()
+		doc = self._checkin(employee=employee, start_date="2026-06-22", end_date="2026-06-22", reason="flu")
+		logs = self._logs(doc.name, since)
+		self.assertEqual([r.status for r in logs], ["Success"], logs)
+		self.assertIn(doc.leave_application, logs[0].message)
+
+	def test_no_allocation_parks_a_draft_and_keeps_attendance(self):
+		# Without a sick allocation HRMS refuses the leave outright. The sick off
+		# is kept as a draft with a comment for HR; attendance is left alone
+		# until HR allocates and submits it.
+		employee = make_employee("CV-TEST-9021")
+		if not ensure_sick_leave_prerequisites(employee, "2026-06-24"):
+			self.skipTest("this site will not allow the sick-leave prerequisites to be built")
+		for name in frappe.get_all(
+			"Leave Allocation", filters={"employee": employee, "docstatus": 1}, pluck="name"
+		):
+			frappe.get_doc("Leave Allocation", name).cancel()
+		present = self._mark(employee, "2026-06-24", "Present")
+
+		since = frappe.utils.now()
+		doc = self._checkin(employee=employee, start_date="2026-06-24", end_date="2026-06-25", reason="flu")
+		self.assertIsNotNone(doc.leave_application)
+		leave = frappe.get_doc("Leave Application", doc.leave_application)
+		self.assertEqual(leave.docstatus, 0)
+		self.assertEqual(leave.status, "Open")
+		self.assertEqual(str(leave.from_date), "2026-06-24")
+		self.assertEqual(str(leave.to_date), "2026-06-25")
+		self.assertTrue(
+			frappe.db.exists(
+				"Comment",
+				{
+					"reference_doctype": "Leave Application",
+					"reference_name": leave.name,
+					"comment_type": "Comment",
+				},
+			)
+		)
+		self.assertEqual(frappe.db.get_value("Attendance", present, "docstatus"), 1)
+		self.assertEqual([r.status for r in self._logs(doc.name, since)], ["Warning"])
+
+		# A later save does not park a second draft.
+		doc.reason = "flu (edited)"
+		doc.save(ignore_permissions=True)
+		self.assertEqual(frappe.db.count("Leave Application", {"employee": employee, "docstatus": 0}), 1)

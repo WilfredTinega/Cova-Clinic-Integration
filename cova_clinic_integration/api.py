@@ -20,6 +20,7 @@ import frappe
 from frappe import _
 from frappe.integrations.utils import make_post_request
 
+from cova_clinic_integration.clinic_log import ERROR, SUCCESS, WARNING, log_clinic
 from cova_clinic_integration.cova_clinic_integration.doctype.clinic_test_request.clinic_test_request import (
 	existing_preemployment_request,
 )
@@ -1289,16 +1290,16 @@ def cova_clinic_api():
 		resp = {"error": "Unknown action: %s" % action}
 
 	# ─── AUDIT LOG ────────────────────────────────────────────────────
-	# Record every COVA action's outcome (success responses included, not just
-	# exceptions) in the Error Log so the full request/response history is visible.
-	try:
-		cova_status = resp.get("status") if isinstance(resp, dict) else None
-		frappe.log_error(
-			title=("COVA " + str(action or "unknown") + " · " + str(cova_status or "done"))[:140],
-			message=json.dumps({"action": action, "request": data, "response": resp}, default=str, indent=2),
-		)
-	except Exception:
-		pass
+	# Every COVA action's outcome, successes included, goes to Clinic API Log.
+	failed = isinstance(resp, dict) and bool(resp.get("error"))
+	log_clinic(
+		"cova_clinic_api · " + str(action or "unknown"),
+		ERROR if failed else SUCCESS,
+		message=str(resp.get("error") or resp.get("status") or "") if isinstance(resp, dict) else None,
+		request=data,
+		response=resp,
+		employee=data.get("employee") or employee_from_payroll(data.get("payrollNumber")),
+	)
 
 	frappe.response["message"] = resp
 	return resp
@@ -3336,6 +3337,7 @@ def get_clinic_data():
 
 		except Exception as e:
 			frappe.log_error(title="Clinic Data API GET Error", message=str(e))
+			log_clinic("getClinicData · GET", ERROR, message=str(e), request=dict(frappe.request.args))
 			frappe.response.update(
 				{"status": "error", "message": "Failed to fetch records: {0}".format(str(e))}
 			)
@@ -3357,15 +3359,13 @@ def get_clinic_data():
 				if not posted_id
 				else "Employee '{0}' does not exist. Please provide a valid Employee ID.".format(posted_id)
 			)
-			frappe.log_error(
-				title="Clinic Data API POST Error",
-				message=message + "\n\n" + json.dumps(data, indent=2, default=str),
-			)
+			log_clinic("getClinicData · POST", ERROR, message=message, request=data)
 			frappe.response.update({"status": "error", "message": message})
 			frappe.response.http_status_code = 404 if posted_id else 400
 			return
 
 		warnings = []
+		failed_to_process = False
 		try:
 			doc = _clinic_checkin_from_post(data, employee, warnings)
 			doc.insert(ignore_permissions=True)
@@ -3375,6 +3375,7 @@ def get_clinic_data():
 			frappe.db.rollback()
 			frappe.log_error(title="Clinic Data API POST Error", message=frappe.get_traceback())
 			warnings.append("Saved unprocessed: {0}".format(frappe.get_traceback().strip().splitlines()[-1]))
+			failed_to_process = True
 			doc = frappe.get_doc(
 				{"doctype": "Clinic Checkin", "employee": employee, "reason": data.get("reason")}
 			)
@@ -3390,24 +3391,34 @@ def get_clinic_data():
 			status="warning" if warnings else None,
 		)
 
+		reply = {
+			"status": "success",
+			"message": "Clinic data saved successfully",
+			"warnings": warnings,
+			"data": {
+				"id": doc.name,
+				"employee": doc.employee,
+				"leave_application": frappe.db.get_value("Clinic Checkin", doc.name, "leave_application"),
+				"is_external": doc.is_external,
+				"facility": doc.facility,
+				"sick_off_given": doc.sick_off_given,
+			},
+		}
+		log_clinic(
+			"getClinicData · POST",
+			ERROR if failed_to_process else (WARNING if warnings else SUCCESS),
+			message="\n".join(warnings) or "Saved " + doc.name,
+			request=data,
+			response=reply,
+			employee=employee,
+			reference_doctype="Clinic Checkin",
+			reference_name=doc.name,
+		)
+
 		frappe.response.pop("docs", None)
 		frappe.db.commit()
 
-		frappe.response.update(
-			{
-				"status": "success",
-				"message": "Clinic data saved successfully",
-				"warnings": warnings,
-				"data": {
-					"id": doc.name,
-					"employee": doc.employee,
-					"leave_application": frappe.db.get_value("Clinic Checkin", doc.name, "leave_application"),
-					"is_external": doc.is_external,
-					"facility": doc.facility,
-					"sick_off_given": doc.sick_off_given,
-				},
-			}
-		)
+		frappe.response.update(reply)
 		frappe.response.http_status_code = 201
 
 	else:
