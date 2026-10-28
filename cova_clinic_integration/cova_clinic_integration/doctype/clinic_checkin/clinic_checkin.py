@@ -5,6 +5,7 @@ import frappe
 from frappe.model.document import Document
 from frappe.utils import add_days, date_diff, flt, getdate
 
+from cova_clinic_integration.clinic_log import ERROR, SUCCESS, WARNING, log_clinic
 from cova_clinic_integration.cova_clinic_integration.doctype.clinic_ticket.clinic_ticket import mark_visited
 from cova_clinic_integration.member_link import set_cova_member
 
@@ -88,6 +89,26 @@ class ClinicCheckin(Document):
 
 		employee = frappe.get_doc("Employee", self.employee)
 		for from_date, to_date in runs:
+			window = "{0} to {1}".format(from_date, to_date)
+			if not has_sick_allocation(self.employee, from_date):
+				# HRMS will not take sick leave outside an allocation, so park it as
+				# a draft for HR to submit once the allocation exists. Attendance
+				# stays as it is until then; submitting flips the days to On Leave.
+				frappe.db.savepoint("clinic_sick_off")
+				try:
+					leave_name = self.make_draft_sick_leave(employee, from_date, to_date)
+				except Exception as e:
+					frappe.db.rollback(save_point="clinic_sick_off")
+					frappe.log_error(title="Sick Leave - FAILED", message=frappe.get_traceback())
+					self.log_sick_leave(ERROR, "Draft sick leave for {0} not created: {1}".format(window, e))
+					continue
+				self.log_sick_leave(
+					WARNING, "No sick-leave allocation: draft {0} for {1}".format(leave_name, window)
+				)
+				if not self.leave_application:
+					self.db_set("leave_application", leave_name)
+				continue
+
 			# A backdated window is already marked — Present where the employee
 			# clocked in before going to the clinic (HRMS refuses leave over those),
 			# Absent for the rest. The sick off wins: cancel that attendance and let
@@ -97,12 +118,58 @@ class ClinicCheckin(Document):
 			try:
 				cancel_window_attendance(self.employee, from_date, to_date)
 				leave_name = self.make_sick_leave(employee, from_date, to_date)
-			except Exception:
+			except Exception as e:
 				frappe.db.rollback(save_point="clinic_sick_off")
 				frappe.log_error(title="Sick Leave - FAILED", message=frappe.get_traceback())
+				self.log_sick_leave(ERROR, "Sick leave for {0} not filed: {1}".format(window, e))
 				continue
+			self.log_sick_leave(SUCCESS, "Sick leave {0} filed for {1}".format(leave_name, window))
 			if not self.leave_application:
 				self.db_set("leave_application", leave_name)
+
+	def log_sick_leave(self, status, message):
+		log_clinic(
+			"sick_leave",
+			status,
+			message=message,
+			employee=self.employee,
+			reference_doctype=self.doctype,
+			reference_name=self.name,
+		)
+
+	def make_draft_sick_leave(self, employee, from_date, to_date):
+		approver = resolve_leave_approver(employee)
+		leave = frappe.new_doc("Leave Application")
+		leave.update(
+			{
+				"employee": employee.name,
+				"employee_name": employee.employee_name,
+				"company": employee.company,
+				"department": employee.department,
+				"leave_type": SICK_LEAVE_TYPE,
+				"from_date": from_date,
+				"to_date": to_date,
+				"total_leave_days": date_diff(to_date, from_date) + 1,
+				"posting_date": frappe.utils.nowdate(),
+				"description": self.reason,
+				"leave_approver": approver,
+				"leave_approver_name": frappe.utils.get_fullname(approver) if approver else None,
+				"status": "Open",
+			}
+		)
+		leave.flags.ignore_permissions = True
+		# HRMS's own validate refuses a period outside any allocation; that is
+		# exactly the gap this draft is waiting on, and submitting re-runs it.
+		leave.flags.ignore_validate = True
+		leave.insert(ignore_permissions=True)
+		leave.add_comment(
+			"Comment",
+			"No Sick Leave allocation covers {0} to {1} for {2}. Created as a draft from clinic "
+			"sick off {3}: allocate sick leave, then submit.".format(
+				from_date, to_date, employee.employee_name or employee.name, self.name
+			),
+		)
+		return leave.name
 
 	def make_sick_leave(self, employee, from_date, to_date):
 		leave_type, available_balance = pick_sick_leave_type(employee.name, from_date, to_date)
@@ -135,6 +202,21 @@ class ClinicCheckin(Document):
 			leave.db_set("workflow_state", "Approved by HR")
 		leave.db_set("leave_balance", available_balance)
 		return leave.name
+
+
+def has_sick_allocation(employee, date) -> bool:
+	return bool(
+		frappe.db.exists(
+			"Leave Allocation",
+			{
+				"employee": employee,
+				"leave_type": ["in", [SICK_LEAVE_TYPE, HALF_PAY_SICK_LEAVE_TYPE]],
+				"docstatus": 1,
+				"from_date": ["<=", date],
+				"to_date": [">=", date],
+			},
+		)
+	)
 
 
 def cancel_window_attendance(employee, from_date, to_date):

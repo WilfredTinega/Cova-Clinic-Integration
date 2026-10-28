@@ -1082,6 +1082,7 @@ class TestGetClinicData(IntegrationTestCase):
 	def setUp(self):
 		self.employee = make_employee("CV-API-8002", "Clinic Data")
 		self.created = []
+		self.started = frappe.utils.now()
 
 	def tearDown(self):
 		# get_clinic_data's POST branch calls frappe.db.commit() itself, so the
@@ -1091,6 +1092,7 @@ class TestGetClinicData(IntegrationTestCase):
 		for name in set(mine) | set(self.created):
 			if frappe.db.exists("Clinic Checkin", name):
 				frappe.delete_doc("Clinic Checkin", name, force=True, ignore_permissions=True)
+		frappe.db.delete("Clinic API Log", {"creation": [">=", self.started]})
 		frappe.db.commit()
 		frappe.db.rollback()
 
@@ -1146,6 +1148,31 @@ class TestGetClinicData(IntegrationTestCase):
 		self.assertEqual(response.status, "error")
 		self.assertIn("does not exist", response.message)
 		self.assertEqual(frappe.db.count("Clinic Checkin"), before)
+		log = frappe.get_all(
+			"Clinic API Log",
+			filters={"action": "getClinicData · POST", "status": "Error", "creation": [">=", self.started]},
+			fields=["message", "request"],
+			order_by="creation desc",
+			limit=1,
+		)[0]
+		self.assertIn("DS 83726", log.message)
+		self.assertIn("DS 83726", log.request)
+
+	def test_post_is_logged_against_its_checkin(self):
+		with stub_request(json_body={"employee": self.employee, "reason": "walk-in"}) as response:
+			api.get_clinic_data()
+		doc = self._saved(response)
+		logs = frappe.get_all(
+			"Clinic API Log",
+			filters={
+				"reference_doctype": "Clinic Checkin",
+				"reference_name": doc.name,
+				"action": "getClinicData · POST",
+				"creation": [">=", self.started],
+			},
+			fields=["status", "employee"],
+		)
+		self.assertEqual(logs, [{"status": "Success", "employee": self.employee}])
 
 	def test_post_resolves_the_employee_by_device_id(self):
 		frappe.db.set_value("Employee", self.employee, "attendance_device_id", "DEV-8002")
@@ -1610,7 +1637,8 @@ class TestOnboarding(IntegrationTestCase):
 	# so it was dropped from the onboarding panel and is exempt here. Its step
 	# still exists as a Form Tour — see test_the_settings_step_walks_the_single.
 	# Gate Pass is upande_ta's own doctype, linked in only on sites that run it.
-	NOT_ONBOARDED: ClassVar[set] = {"Cova Clinic Settings", "Gate Pass"}
+	# Clinic API Log is written by the integration, never entered by hand.
+	NOT_ONBOARDED: ClassVar[set] = {"Cova Clinic Settings", "Gate Pass", "Clinic API Log"}
 
 	def test_every_sidebar_doctype_has_a_step(self):
 		# Read the sidebar the app ships rather than the site's row: newer v16
